@@ -259,6 +259,48 @@ infraRouter.post("/accounts/:id/sync", async (req: Request, res: Response) => {
   }
 });
 
+// ─── Snapshots (versioning & diff) ──────────────────────────────────────────
+
+import {
+  listSnapshots,
+  getSnapshot,
+  takeSnapshot,
+  deleteSnapshot,
+  diffSnapshots,
+} from "./infraSnapshots.js";
+
+infraRouter.get("/snapshots", (_req: Request, res: Response) => {
+  res.json(listSnapshots());
+});
+
+infraRouter.get("/snapshots/:id", (req: Request, res: Response) => {
+  const snapshot = getSnapshot(req.params.id);
+  if (!snapshot) { res.status(404).json({ error: "Snapshot not found" }); return; }
+  res.json(snapshot);
+});
+
+infraRouter.post("/snapshots", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const { name, description } = req.body;
+  if (!name) { res.status(400).json({ error: "name is required" }); return; }
+  const snapshot = takeSnapshot(name, description || "", authReq.user!.sub);
+  logAudit(authReq.user!.sub, "infra_snapshot_created", snapshot.id, `Snapshot: ${name} (${snapshot.resourceCount} resources)`);
+  res.status(201).json(snapshot);
+});
+
+infraRouter.delete("/snapshots/:id", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  if (!deleteSnapshot(req.params.id)) { res.status(404).json({ error: "Snapshot not found" }); return; }
+  logAudit(authReq.user!.sub, "infra_snapshot_deleted", req.params.id, "Snapshot deleted");
+  res.json({ ok: true });
+});
+
+infraRouter.get("/snapshots/:fromId/diff/:toId", (req: Request, res: Response) => {
+  const diff = diffSnapshots(req.params.fromId, req.params.toId);
+  if (!diff) { res.status(404).json({ error: "Snapshot(s) not found" }); return; }
+  res.json(diff);
+});
+
 // ─── Saved Diagrams (editable canvas state) ──────────────────────────────────
 
 import crypto from "node:crypto";
