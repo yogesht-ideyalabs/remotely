@@ -40,6 +40,7 @@ import { GroupNode } from "../components/diagram/GroupNode";
 import { ShapePalette, type ShapeDefinition } from "../components/diagram/ShapePalette";
 import { DiagramToolbar } from "../components/diagram/DiagramToolbar";
 import { EdgeLabelEditor } from "../components/diagram/EdgeLabelEditor";
+import { NodePropertiesPanel } from "../components/diagram/NodePropertiesPanel";
 
 // Saved diagram shape
 interface SavedDiagram {
@@ -73,6 +74,8 @@ function DiagramEditorInner() {
   const [editingEdge, setEditingEdge] = useState<string | null>(null);
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [showWelcome, setShowWelcome] = useState(true);
 
   const { screenToFlowPosition, getNodes, getEdges, fitView } = useReactFlow();
 
@@ -349,24 +352,6 @@ function DiagramEditorInner() {
     URL.revokeObjectURL(url);
   }, [diagramName, getNodes, getEdges]);
 
-  // Export as PNG (uses canvas rendering)
-  const exportPNG = useCallback(() => {
-    const svgEl = reactFlowWrapper.current?.querySelector(".react-flow__viewport");
-    if (!svgEl) return;
-
-    // Use the built-in toSVG approach via html2canvas or similar
-    // For now, export the SVG content
-    const svgClone = svgEl.cloneNode(true) as SVGElement;
-    const svgData = new XMLSerializer().serializeToString(svgClone);
-    const blob = new Blob([svgData], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${diagramName.replace(/\s+/g, "-").toLowerCase()}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [diagramName]);
-
   // Delete selected nodes/edges
   const deleteSelected = useCallback(() => {
     setNodes((nds) => nds.filter((n) => !n.selected));
@@ -398,6 +383,87 @@ function DiagramEditorInner() {
     }
   }, [setNodes, setEdges]);
 
+  // Node click — open properties panel
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    setSelectedNodeId(node.id);
+  }, []);
+
+  // Close properties panel when clicking canvas background
+  const onPaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+  }, []);
+
+  // Update node properties from the panel
+  const updateNodeData = useCallback(
+    (nodeId: string, newData: Record<string, unknown>) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...newData } } : n))
+      );
+    },
+    [setNodes]
+  );
+
+  // Export as PNG using canvas
+  const exportPNG = useCallback(async () => {
+    const viewport = reactFlowWrapper.current?.querySelector(".react-flow__viewport") as HTMLElement;
+    if (!viewport) return;
+
+    // Get the bounding box of all nodes
+    const nodeElements = reactFlowWrapper.current?.querySelectorAll(".react-flow__node");
+    if (!nodeElements || nodeElements.length === 0) return;
+
+    // Use html-to-image approach via canvas
+    try {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // Capture the viewport as SVG then rasterize
+      const svgData = new XMLSerializer().serializeToString(viewport);
+      const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(svgBlob);
+
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width || 1920;
+        canvas.height = img.height || 1080;
+        ctx.fillStyle = "#0b0e14";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+
+        canvas.toBlob((blob) => {
+          if (!blob) return;
+          const pngUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = pngUrl;
+          a.download = `${diagramName.replace(/\s+/g, "-").toLowerCase()}.png`;
+          a.click();
+          URL.revokeObjectURL(pngUrl);
+        }, "image/png");
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    } catch {
+      // Fallback: export as SVG
+      const svgData = new XMLSerializer().serializeToString(viewport);
+      const blob = new Blob([svgData], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${diagramName.replace(/\s+/g, "-").toLowerCase()}.svg`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }, [diagramName]);
+
+  // The selected node object
+  const selectedNode = selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : null;
+
+  // Hide welcome once user has nodes or dismissed it
+  useEffect(() => {
+    if (nodes.length > 0) setShowWelcome(false);
+  }, [nodes.length]);
+
   return (
     <div className="diagram-editor-page">
       <DiagramToolbar
@@ -407,7 +473,7 @@ function DiagramEditorInner() {
         onLoad={() => setShowLoadModal(true)}
         onExportJSON={exportJSON}
         onExportSVG={exportPNG}
-        onImportDiscovery={() => setShowImportModal(true)}
+        onImportDiscovery={() => { setShowImportModal(true); setShowWelcome(false); }}
         onClear={clearCanvas}
         onDelete={deleteSelected}
       />
@@ -425,8 +491,11 @@ function DiagramEditorInner() {
             onDrop={onDrop}
             onDragOver={onDragOver}
             onEdgeDoubleClick={onEdgeDoubleClick}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
+            proOptions={{ hideAttribution: true }}
             fitView
             snapToGrid
             snapGrid={[16, 16]}
@@ -441,13 +510,52 @@ function DiagramEditorInner() {
             />
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#2a3040" />
 
-            <Panel position="bottom-center">
-              <div className="diagram-hint">
-                Drag shapes from the left panel • Double-click edges to label • Shift+click to multi-select
-              </div>
-            </Panel>
+            {/* Welcome / Auto-Build prompt when canvas is empty */}
+            {showWelcome && nodes.length === 0 && (
+              <Panel position="top-center">
+                <div className="welcome-panel">
+                  <h2>🗺️ Infrastructure Diagram Editor</h2>
+                  <p>Choose how to start:</p>
+                  <div className="welcome-options">
+                    <button className="welcome-option" onClick={() => { setShowImportModal(true); setShowWelcome(false); }}>
+                      <span className="welcome-icon">🔍</span>
+                      <strong>Auto-Build from Live Infrastructure</strong>
+                      <span className="welcome-desc">Pull resources from your AWS/Azure/GCP accounts and auto-generate the diagram</span>
+                    </button>
+                    <button className="welcome-option" onClick={() => setShowWelcome(false)}>
+                      <span className="welcome-icon">✏️</span>
+                      <strong>Draw Manually</strong>
+                      <span className="welcome-desc">Drag shapes from the left panel to build your architecture from scratch</span>
+                    </button>
+                    <button className="welcome-option" onClick={() => { setShowLoadModal(true); setShowWelcome(false); }}>
+                      <span className="welcome-icon">📂</span>
+                      <strong>Load Saved Diagram</strong>
+                      <span className="welcome-desc">Open a previously saved diagram and continue editing</span>
+                    </button>
+                  </div>
+                </div>
+              </Panel>
+            )}
+
+            {!showWelcome && (
+              <Panel position="bottom-center">
+                <div className="diagram-hint">
+                  Drag shapes from the left • Click a node to configure it • Double-click edges to label • Del to delete
+                </div>
+              </Panel>
+            )}
           </ReactFlow>
         </div>
+
+        {/* Node Properties Panel (right sidebar) */}
+        {selectedNode && (
+          <NodePropertiesPanel
+            node={selectedNode}
+            allNodes={nodes}
+            onUpdate={updateNodeData}
+            onClose={() => setSelectedNodeId(null)}
+          />
+        )}
       </div>
 
       {/* Edge label editor */}
