@@ -223,6 +223,37 @@ infraRouter.post("/accounts/:id/sync", async (req: Request, res: Response) => {
     );
 
     res.json(result);
+  } else if (account.provider === "azure") {
+    const { tenantId, clientId, clientSecret, subscriptionIds } = req.body;
+    if (!tenantId || !clientId || !clientSecret) {
+      res.status(400).json({ error: "tenantId, clientId, and clientSecret are required for Azure sync" });
+      return;
+    }
+
+    const result = await syncAzureAccount(account, {
+      tenantId,
+      clientId,
+      clientSecret,
+      subscriptionIds: subscriptionIds || [],
+    });
+
+    logAudit(authReq.user!.sub, "infra_cloud_sync_triggered", id, `Azure sync: ${result.totalCreated} new, ${result.totalUpdated} updated`);
+    res.json(result);
+  } else if (account.provider === "gcp") {
+    const { clientEmail, privateKey, scope: gcpScope } = req.body;
+    if (!clientEmail || !privateKey || !gcpScope) {
+      res.status(400).json({ error: "clientEmail, privateKey, and scope are required for GCP sync" });
+      return;
+    }
+
+    const result = await syncGcpAccount(account, {
+      clientEmail,
+      privateKey,
+      scope: gcpScope,
+    });
+
+    logAudit(authReq.user!.sub, "infra_cloud_sync_triggered", id, `GCP sync: ${result.totalCreated} new, ${result.totalUpdated} updated`);
+    res.json(result);
   } else {
     res.status(400).json({ error: `Direct API sync not yet supported for provider: ${account.provider}` });
   }
@@ -232,6 +263,8 @@ infraRouter.post("/accounts/:id/sync", async (req: Request, res: Response) => {
 
 import crypto from "node:crypto";
 import { syncAwsAccount } from "./infraCloudSync.js";
+import { syncAzureAccount } from "./infraCloudSyncAzure.js";
+import { syncGcpAccount } from "./infraCloudSyncGcp.js";
 
 interface SavedDiagram {
   id: string;

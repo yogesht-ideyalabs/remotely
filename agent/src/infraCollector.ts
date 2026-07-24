@@ -16,6 +16,7 @@
 
 import os from "node:os";
 import { execSync } from "node:child_process";
+import { collectDockerContainers, collectListeningServices } from "./dockerCollector.js";
 
 export interface DiscoveredResource {
   externalId: string;
@@ -491,7 +492,7 @@ export function collectGenericResources(agentId: string): DiscoveredResource[] {
     }
   }
 
-  return [
+  const resources: DiscoveredResource[] = [
     {
       externalId: `host-${agentId}`,
       provider: "on-prem",
@@ -512,6 +513,12 @@ export function collectGenericResources(agentId: string): DiscoveredResource[] {
       reportedByAgent: agentId,
     },
   ];
+
+  // Also discover Docker containers and listening services
+  resources.push(...collectDockerContainers());
+  resources.push(...collectListeningServices());
+
+  return resources;
 }
 
 /**
