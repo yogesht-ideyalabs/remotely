@@ -179,9 +179,59 @@ infraRouter.get("/summary", (_req: Request, res: Response) => {
   res.json(summary);
 });
 
+// ─── Cloud Sync (Direct API Mode) ───────────────────────────────────────────
+
+/**
+ * Trigger a cloud sync for a specific account.
+ * The control plane calls the cloud provider APIs directly using stored credentials.
+ */
+infraRouter.post("/accounts/:id/sync", async (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const { id } = req.params;
+  const account = getInfraAccount(id);
+
+  if (!account) {
+    res.status(404).json({ error: "Account not found" });
+    return;
+  }
+
+  if (account.accessMode !== "api") {
+    res.status(400).json({ error: "Account is configured for agent-based discovery, not direct API sync" });
+    return;
+  }
+
+  const roleArn = req.body.roleArn || account.credentialRef || "";
+  const regions = req.body.regions || account.regions;
+
+  if (!roleArn) {
+    res.status(400).json({ error: "roleArn is required for AWS direct sync" });
+    return;
+  }
+
+  if (account.provider === "aws") {
+    const result = await syncAwsAccount(account, {
+      roleArn,
+      externalId: req.body.externalId,
+      regions: regions.length > 0 ? regions : ["us-east-1"],
+    });
+
+    logAudit(
+      authReq.user!.sub,
+      "infra_cloud_sync_triggered",
+      id,
+      `AWS sync: ${result.totalCreated} new, ${result.totalUpdated} updated, ${result.totalPruned} pruned, ${result.errors.length} errors`
+    );
+
+    res.json(result);
+  } else {
+    res.status(400).json({ error: `Direct API sync not yet supported for provider: ${account.provider}` });
+  }
+});
+
 // ─── Saved Diagrams (editable canvas state) ──────────────────────────────────
 
 import crypto from "node:crypto";
+import { syncAwsAccount } from "./infraCloudSync.js";
 
 interface SavedDiagram {
   id: string;
