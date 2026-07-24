@@ -30,6 +30,7 @@ import {
   type DiagramOptions,
   type InfraResourceType,
 } from "./infraDiscovery.js";
+import { loadTable, saveRow, deleteRow } from "./db.js";
 
 export const infraRouter = Router();
 
@@ -176,4 +177,97 @@ infraRouter.post("/diagram", (req: Request, res: Response) => {
 infraRouter.get("/summary", (_req: Request, res: Response) => {
   const summary = getInfraSummary();
   res.json(summary);
+});
+
+// ─── Saved Diagrams (editable canvas state) ──────────────────────────────────
+
+import crypto from "node:crypto";
+
+interface SavedDiagram {
+  id: string;
+  name: string;
+  nodes: unknown[];
+  edges: unknown[];
+  createdAt: number;
+  updatedAt: number;
+  createdBy: string;
+}
+
+const savedDiagrams: SavedDiagram[] = loadTable<SavedDiagram>("infraDiagrams");
+
+infraRouter.get("/diagrams", (_req: Request, res: Response) => {
+  // Return metadata only (not full node/edge data) for the list view
+  res.json(
+    savedDiagrams.map((d) => ({
+      id: d.id,
+      name: d.name,
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt,
+      createdBy: d.createdBy,
+      nodes: d.nodes,
+      edges: d.edges,
+    }))
+  );
+});
+
+infraRouter.get("/diagrams/:id", (req: Request, res: Response) => {
+  const diagram = savedDiagrams.find((d) => d.id === req.params.id);
+  if (!diagram) {
+    res.status(404).json({ error: "Diagram not found" });
+    return;
+  }
+  res.json(diagram);
+});
+
+infraRouter.post("/diagrams", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const { id, name, nodes, edges } = req.body;
+
+  if (!name || !nodes || !edges) {
+    res.status(400).json({ error: "name, nodes, and edges are required" });
+    return;
+  }
+
+  // Update existing or create new
+  if (id) {
+    const existing = savedDiagrams.find((d) => d.id === id);
+    if (existing) {
+      existing.name = name;
+      existing.nodes = nodes;
+      existing.edges = edges;
+      existing.updatedAt = Date.now();
+      saveRow("infraDiagrams", existing.id, existing);
+      res.json(existing);
+      return;
+    }
+  }
+
+  // Create new
+  const diagram: SavedDiagram = {
+    id: crypto.randomUUID(),
+    name,
+    nodes,
+    edges,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    createdBy: authReq.user!.sub,
+  };
+  savedDiagrams.push(diagram);
+  saveRow("infraDiagrams", diagram.id, diagram);
+
+  logAudit(authReq.user!.sub, "infra_diagram_saved", diagram.id, `Saved diagram: ${name}`);
+  res.status(201).json(diagram);
+});
+
+infraRouter.delete("/diagrams/:id", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const idx = savedDiagrams.findIndex((d) => d.id === req.params.id);
+  if (idx === -1) {
+    res.status(404).json({ error: "Diagram not found" });
+    return;
+  }
+  const [removed] = savedDiagrams.splice(idx, 1);
+  deleteRow("infraDiagrams", removed.id);
+  logAudit(authReq.user!.sub, "infra_diagram_deleted", removed.id, `Deleted diagram: ${removed.name}`);
+  res.json({ ok: true });
 });

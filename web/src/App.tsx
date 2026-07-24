@@ -22,6 +22,7 @@ import WatchSession from "./pages/WatchSession";
 import AccessRequests from "./pages/AccessRequests";
 import SiemExport from "./pages/SiemExport";
 import InfraMap from "./pages/InfraMap";
+import DiagramEditor from "./pages/DiagramEditor";
 
 export default function App() {
   return (
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="/watch/:sessionId" element={<WatchSession />} />
           <Route path="/access-requests" element={<AccessRequests />} />
           <Route path="/admin/infra-map" element={<InfraMap />} />
+          <Route path="/admin/diagram-editor" element={<DiagramEditor />} />
         </Route>
       </Routes>
     </BrowserRouter>
