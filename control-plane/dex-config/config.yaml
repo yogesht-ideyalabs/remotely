@@ -1,0 +1,19 @@
+issuer: http://localhost:5556/dex
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+web:
+  http: 0.0.0.0:5556
+staticClients:
+- id: remotely
+  redirectURIs:
+  - 'http://localhost:4000/api/auth/oidc/callback'
+  name: 'Remotely'
+  secret: remotely-dex-secret
+enablePasswordDB: true
+staticPasswords:
+- email: "jane.doe@remotely.dev"
+  hash: "$2a$10$ue6BVqPjH5w8o2ZcuNdY..tB196daB3K7sTW46XRYNc4lm.93YAEy"
+  username: "jane.doe"
+  userID: "sso-jane-doe"

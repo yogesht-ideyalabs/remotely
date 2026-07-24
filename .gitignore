@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-linux-x64/
+*.db
+*.db-shm
+*.db-wal
+*.jsonl
+recordings/
+.env
+.DS_Store

@@ -1,0 +1,451 @@
+import { useEffect, useState, useCallback } from "react";
+import { apiFetch } from "../api";
+
+interface InfraAccount {
+  id: string;
+  name: string;
+  provider: string;
+  accountId: string;
+  regions: string[];
+  accessMode: string;
+  agentIds: string[];
+  enabled: boolean;
+  lastSyncAt: number | null;
+  createdAt: number;
+}
+
+interface InfraSummary {
+  totalResources: number;
+  byProvider: Record<string, number>;
+  byType: Record<string, number>;
+  byRegion: Record<string, number>;
+  byAccount: { id: string; name: string; count: number }[];
+  lastSyncAt: number | null;
+}
+
+interface GeneratedDiagram {
+  format: string;
+  diagramType: string;
+  content: string;
+  resourceCount: number;
+  generatedAt: number;
+}
+
+type DiagramFormat = "mermaid" | "d2" | "json-graph";
+type DiagramType = "architecture" | "network" | "both";
+type GroupBy = "account" | "region" | "vpc" | "type";
+type Scope = "all" | "account" | "region" | "vpc";
+
+export default function InfraMap() {
+  const [accounts, setAccounts] = useState<InfraAccount[]>([]);
+  const [summary, setSummary] = useState<InfraSummary | null>(null);
+  const [diagrams, setDiagrams] = useState<GeneratedDiagram[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Diagram generation options
+  const [format, setFormat] = useState<DiagramFormat>("mermaid");
+  const [diagramType, setDiagramType] = useState<DiagramType>("architecture");
+  const [groupBy, setGroupBy] = useState<GroupBy>("account");
+  const [scope, setScope] = useState<Scope>("all");
+  const [scopeId, setScopeId] = useState("");
+
+  // Add account form
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [newAccount, setNewAccount] = useState({
+    name: "",
+    provider: "aws",
+    accountId: "",
+    regions: "",
+    accessMode: "agent",
+    agentIds: "",
+  });
+
+  const loadData = useCallback(async () => {
+    try {
+      const [accs, sum] = await Promise.all([
+        apiFetch("/api/infra/accounts"),
+        apiFetch("/api/infra/summary"),
+      ]);
+      setAccounts(accs);
+      setSummary(sum);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const generateDiagram = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await apiFetch("/api/infra/diagram", {
+        method: "POST",
+        body: JSON.stringify({
+          format,
+          scope,
+          scopeId: scopeId || undefined,
+          diagramType,
+          groupBy,
+        }),
+      });
+      setDiagrams(resp.diagrams || []);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addAccount = async () => {
+    try {
+      await apiFetch("/api/infra/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          ...newAccount,
+          regions: newAccount.regions.split(",").map((r) => r.trim()).filter(Boolean),
+          agentIds: newAccount.agentIds.split(",").map((r) => r.trim()).filter(Boolean),
+        }),
+      });
+      setShowAddAccount(false);
+      setNewAccount({ name: "", provider: "aws", accountId: "", regions: "", accessMode: "agent", agentIds: "" });
+      loadData();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const deleteAccount = async (id: string) => {
+    if (!confirm("Delete this infrastructure account and all its discovered resources?")) return;
+    try {
+      await apiFetch(`/api/infra/accounts/${id}`, { method: "DELETE" });
+      loadData();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  return (
+    <div className="page infra-map-page">
+      <div className="page-header">
+        <h1>🗺️ Infrastructure Map</h1>
+        <p className="subtitle">
+          Auto-discovered resources across all connected accounts and agents
+        </p>
+      </div>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      {/* Summary Cards */}
+      {summary && (
+        <div className="infra-summary-grid">
+          <div className="summary-card">
+            <div className="card-value">{summary.totalResources}</div>
+            <div className="card-label">Total Resources</div>
+          </div>
+          <div className="summary-card">
+            <div className="card-value">{Object.keys(summary.byProvider).length}</div>
+            <div className="card-label">Providers</div>
+          </div>
+          <div className="summary-card">
+            <div className="card-value">{Object.keys(summary.byRegion).length}</div>
+            <div className="card-label">Regions</div>
+          </div>
+          <div className="summary-card">
+            <div className="card-value">{summary.byAccount.length}</div>
+            <div className="card-label">Accounts</div>
+          </div>
+          {summary.lastSyncAt && (
+            <div className="summary-card">
+              <div className="card-value" style={{ fontSize: "0.9em" }}>
+                {new Date(summary.lastSyncAt).toLocaleString()}
+              </div>
+              <div className="card-label">Last Sync</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Resource breakdown */}
+      {summary && summary.totalResources > 0 && (
+        <div className="infra-breakdown">
+          <div className="breakdown-section">
+            <h3>By Provider</h3>
+            <div className="breakdown-items">
+              {Object.entries(summary.byProvider).map(([provider, count]) => (
+                <span key={provider} className="breakdown-chip">
+                  {providerIcon(provider)} {provider}: {count}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="breakdown-section">
+            <h3>By Type</h3>
+            <div className="breakdown-items">
+              {Object.entries(summary.byType)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10)
+                .map(([type, count]) => (
+                  <span key={type} className="breakdown-chip">
+                    {type}: {count}
+                  </span>
+                ))}
+            </div>
+          </div>
+          <div className="breakdown-section">
+            <h3>By Region</h3>
+            <div className="breakdown-items">
+              {Object.entries(summary.byRegion).map(([region, count]) => (
+                <span key={region} className="breakdown-chip">
+                  {region}: {count}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diagram Generator */}
+      <div className="infra-section">
+        <h2>Generate Diagram</h2>
+        <div className="diagram-controls">
+          <label>
+            Format:
+            <select value={format} onChange={(e) => setFormat(e.target.value as DiagramFormat)}>
+              <option value="mermaid">Mermaid (rendered in browser)</option>
+              <option value="d2">D2 (copyable source)</option>
+              <option value="json-graph">JSON Graph (for custom tools)</option>
+            </select>
+          </label>
+          <label>
+            Type:
+            <select value={diagramType} onChange={(e) => setDiagramType(e.target.value as DiagramType)}>
+              <option value="architecture">Architecture</option>
+              <option value="network">Network Topology</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          <label>
+            Group By:
+            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
+              <option value="account">Account</option>
+              <option value="region">Region</option>
+              <option value="vpc">VPC</option>
+              <option value="type">Resource Type</option>
+            </select>
+          </label>
+          <label>
+            Scope:
+            <select value={scope} onChange={(e) => setScope(e.target.value as Scope)}>
+              <option value="all">All Resources</option>
+              <option value="account">Specific Account</option>
+              <option value="region">Specific Region</option>
+              <option value="vpc">Specific VPC</option>
+            </select>
+          </label>
+          {scope !== "all" && (
+            <label>
+              Scope ID:
+              <input
+                type="text"
+                value={scopeId}
+                onChange={(e) => setScopeId(e.target.value)}
+                placeholder={scope === "account" ? "Account ID" : scope === "region" ? "us-east-1" : "vpc-xxx"}
+              />
+            </label>
+          )}
+          <button className="btn-primary" onClick={generateDiagram} disabled={loading}>
+            {loading ? "Generating..." : "Generate Diagram"}
+          </button>
+        </div>
+      </div>
+
+      {/* Rendered Diagrams */}
+      {diagrams.length > 0 && (
+        <div className="infra-section">
+          <h2>Generated Diagrams</h2>
+          {diagrams.map((d, i) => (
+            <div key={i} className="diagram-output">
+              <div className="diagram-header">
+                <span className="diagram-badge">{d.diagramType}</span>
+                <span className="diagram-meta">
+                  {d.resourceCount} resources • {d.format} •{" "}
+                  {new Date(d.generatedAt).toLocaleTimeString()}
+                </span>
+                <button
+                  className="btn-sm"
+                  onClick={() => navigator.clipboard.writeText(d.content)}
+                >
+                  📋 Copy Source
+                </button>
+              </div>
+              {d.format === "mermaid" ? (
+                <div className="mermaid-container">
+                  <MermaidDiagram content={d.content} />
+                </div>
+              ) : (
+                <pre className="diagram-source">{d.content}</pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Accounts Management */}
+      <div className="infra-section">
+        <div className="section-header">
+          <h2>Infrastructure Accounts</h2>
+          <button className="btn-primary" onClick={() => setShowAddAccount(!showAddAccount)}>
+            + Add Account
+          </button>
+        </div>
+
+        {showAddAccount && (
+          <div className="add-account-form">
+            <input
+              placeholder="Account Name (e.g., Production AWS)"
+              value={newAccount.name}
+              onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
+            />
+            <select
+              value={newAccount.provider}
+              onChange={(e) => setNewAccount({ ...newAccount, provider: e.target.value })}
+            >
+              <option value="aws">AWS</option>
+              <option value="azure">Azure</option>
+              <option value="gcp">GCP</option>
+              <option value="vmware">VMware</option>
+              <option value="proxmox">Proxmox</option>
+              <option value="on-prem">On-Premise</option>
+            </select>
+            <input
+              placeholder="Account/Subscription ID"
+              value={newAccount.accountId}
+              onChange={(e) => setNewAccount({ ...newAccount, accountId: e.target.value })}
+            />
+            <input
+              placeholder="Regions (comma-separated, e.g., us-east-1,eu-west-1)"
+              value={newAccount.regions}
+              onChange={(e) => setNewAccount({ ...newAccount, regions: e.target.value })}
+            />
+            <select
+              value={newAccount.accessMode}
+              onChange={(e) => setNewAccount({ ...newAccount, accessMode: e.target.value })}
+            >
+              <option value="agent">Agent-based discovery</option>
+              <option value="api">Direct API access</option>
+            </select>
+            {newAccount.accessMode === "agent" && (
+              <input
+                placeholder="Agent IDs (comma-separated)"
+                value={newAccount.agentIds}
+                onChange={(e) => setNewAccount({ ...newAccount, agentIds: e.target.value })}
+              />
+            )}
+            <div className="form-actions">
+              <button className="btn-primary" onClick={addAccount}>Save</button>
+              <button className="btn-secondary" onClick={() => setShowAddAccount(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        <div className="accounts-list">
+          {accounts.length === 0 ? (
+            <p className="empty-state">
+              No infrastructure accounts configured. Add one to start discovering resources.
+            </p>
+          ) : (
+            accounts.map((acc) => (
+              <div key={acc.id} className="account-card">
+                <div className="account-info">
+                  <span className="account-icon">{providerIcon(acc.provider)}</span>
+                  <div>
+                    <strong>{acc.name}</strong>
+                    <div className="account-meta">
+                      {acc.provider} • {acc.accountId} • {acc.accessMode}
+                      {acc.regions.length > 0 && ` • ${acc.regions.join(", ")}`}
+                    </div>
+                    {acc.lastSyncAt && (
+                      <div className="account-sync">
+                        Last sync: {new Date(acc.lastSyncAt).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="account-actions">
+                  <span className={`status-dot ${acc.enabled ? "active" : "inactive"}`} />
+                  <button className="btn-sm btn-danger" onClick={() => deleteAccount(acc.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Simple Mermaid renderer using the mermaid CDN
+function MermaidDiagram({ content }: { content: string }) {
+  const [svg, setSvg] = useState<string>("");
+  const [renderError, setRenderError] = useState("");
+
+  useEffect(() => {
+    const renderMermaid = async () => {
+      try {
+        // Dynamically load mermaid if not already loaded
+        if (!(window as unknown as { mermaid: unknown }).mermaid) {
+          const script = document.createElement("script");
+          script.src = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js";
+          script.onload = () => {
+            const mermaid = (window as unknown as { mermaid: { initialize: (opts: object) => void; render: (id: string, def: string) => Promise<{ svg: string }> } }).mermaid;
+            mermaid.initialize({ startOnLoad: false, theme: "dark" });
+            mermaid
+              .render("mermaid-" + Date.now(), content)
+              .then(({ svg }) => setSvg(svg))
+              .catch((err: Error) => setRenderError(err.message));
+          };
+          document.head.appendChild(script);
+        } else {
+          const mermaid = (window as unknown as { mermaid: { render: (id: string, def: string) => Promise<{ svg: string }> } }).mermaid;
+          const { svg } = await mermaid.render("mermaid-" + Date.now(), content);
+          setSvg(svg);
+        }
+      } catch (err) {
+        setRenderError((err as Error).message);
+      }
+    };
+    renderMermaid();
+  }, [content]);
+
+  if (renderError) {
+    return (
+      <div>
+        <p className="render-error">Diagram render error: {renderError}</p>
+        <pre className="diagram-source">{content}</pre>
+      </div>
+    );
+  }
+
+  if (!svg) return <pre className="diagram-source">{content}</pre>;
+
+  return <div dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+function providerIcon(provider: string): string {
+  const icons: Record<string, string> = {
+    aws: "☁️",
+    azure: "🔷",
+    gcp: "🟡",
+    vmware: "🖥️",
+    proxmox: "🟩",
+    "on-prem": "🏢",
+    other: "📦",
+  };
+  return icons[provider] || "📦";
+}
