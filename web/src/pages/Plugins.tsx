@@ -140,9 +140,9 @@ export default function Plugins() {
                     </label>
                     <div className="plugin-event-list">
                       {cat.eventTypes.map((t) => (
-                        <label key={t} className="plugin-event-item">
-                          <input type="checkbox" checked={form.eventTypes.includes(t)} onChange={() => toggleEventType(t)} style={{ width: "auto", margin: 0 }} />
-                          {t}
+                        <label key={t} className="plugin-event-item" title={t}>
+                          <input type="checkbox" checked={form.eventTypes.includes(t)} onChange={() => toggleEventType(t)} style={{ width: "auto", margin: 0, flexShrink: 0, marginTop: 1 }} />
+                          <span>{t}</span>
                         </label>
                       ))}
                     </div>

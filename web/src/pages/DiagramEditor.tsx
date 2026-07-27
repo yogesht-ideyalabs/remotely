@@ -7,8 +7,9 @@
  * - Connectors with labels
  * - Grouping (VPCs, subnets, AZs, regions)
  * - Auto-layout from discovered infrastructure
- * - Export: PNG, SVG, JSON
- * - Save/load diagrams
+ * - Export: PNG, SVG, PDF, JSON, Mermaid, CSV, HTML
+ * - Save/load diagrams (persisted server-side, per account — see the Load
+ *   modal's own explanation, not a file on the user's machine)
  *
  * Author: Yogesh Tiwari
  */
@@ -32,11 +33,12 @@ import {
   type OnConnect,
   BackgroundVariant,
   MarkerType,
+  ConnectionMode,
   getNodesBounds,
   getViewportForBounds,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { toPng } from "html-to-image";
+import { toPng, toSvg } from "html-to-image";
 import { jsPDF } from "jspdf";
 import { apiFetch, getSession } from "../api";
 import { InfraNode } from "../components/diagram/InfraNode";
@@ -55,6 +57,8 @@ import { PageTabs } from "../components/diagram/PageTabs";
 import { ShareDiagramModal } from "../components/diagram/ShareDiagramModal";
 
 const SNAP_THRESHOLD = 6;
+const INFRA_NODE_DEFAULT_WIDTH = 190;
+const INFRA_NODE_DEFAULT_HEIGHT = 62;
 
 interface ContextMenuState {
   x: number;
@@ -102,6 +106,30 @@ interface SavedDiagram {
   shareToken?: string;
 }
 
+// Back-fills style.width/height on "infra" nodes saved before nodes carried
+// an explicit size (every diagram saved prior to this pass, plus every
+// auto-generated diagram — see the onDrop comment in DiagramEditorInner for
+// why an explicit size is now required at all). Prefers the node's own
+// last-measured size (real rendered dimensions, saved on every diagram from
+// early on) over the generic default so already-resized-by-content nodes
+// don't visibly jump size on load.
+function normalizeInfraNodeSizes(nodes: Node[]): Node[] {
+  return nodes.map((n) => {
+    if (n.type !== "infra") return n;
+    const style = (n.style ?? {}) as Record<string, unknown>;
+    if (style.width && style.height) return n;
+    const measured = n.measured as { width?: number; height?: number } | undefined;
+    return {
+      ...n,
+      style: {
+        ...style,
+        width: style.width ?? measured?.width ?? INFRA_NODE_DEFAULT_WIDTH,
+        height: style.height ?? measured?.height ?? INFRA_NODE_DEFAULT_HEIGHT,
+      },
+    };
+  });
+}
+
 function defaultPage(): DiagramPage {
   return { id: `page-${Date.now()}`, name: "Page 1", nodes: [], edges: [] };
 }
@@ -135,6 +163,9 @@ function DiagramEditorInner() {
   const [historyDiagram, setHistoryDiagram] = useState<{ id: string; name: string } | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareToken, setShareToken] = useState<string | undefined>(undefined);
+  const [saveStatus, setSaveStatus] = useState<{ state: "idle" | "saving" | "saved" | "error"; message?: string; at?: number }>({ state: "idle" });
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const editorPageRef = useRef<HTMLDivElement>(null);
 
   // ─── Multi-page diagrams ────────────────────────────────────────────────
   // Only the active page's content lives in React Flow's own nodes/edges
@@ -482,17 +513,25 @@ function DiagramEditorInner() {
           color: shape.color || "#5b8cff",
           customImage: shape.customImage,
         },
-        ...(shape.isGroup
+        style: shape.isGroup
           ? {
-              style: {
-                width: 400,
-                height: 300,
-                backgroundColor: "rgba(91, 140, 255, 0.05)",
-                borderRadius: 8,
-                border: "2px dashed rgba(91, 140, 255, 0.3)",
-              },
+              width: 400,
+              height: 300,
+              backgroundColor: "rgba(91, 140, 255, 0.05)",
+              borderRadius: 8,
+              border: "2px dashed rgba(91, 140, 255, 0.3)",
             }
-          : {}),
+          // Infra shapes need a concrete starting width/height too, not just
+          // groups — NodeResizer (and InfraNode's own width:100%/height:100%
+          // CSS) both need the node wrapper to have a real pixel size from
+          // the first render. Without this, the wrapper's width stays "auto"
+          // (shrink-to-fit), and a 100%-width child of an auto-sized
+          // absolutely-positioned box resolves its percentage against the
+          // nearest ANCESTOR with a real size instead — which is the whole
+          // canvas viewport, not this node. Confirmed live: without an
+          // explicit size here, freshly-dropped shapes rendered as a
+          // near-fullscreen blown-out card instead of a normal-sized one.
+          : { width: INFRA_NODE_DEFAULT_WIDTH, height: INFRA_NODE_DEFAULT_HEIGHT },
       };
 
       setNodes((nds) => [...nds, newNode]);
@@ -518,6 +557,7 @@ function DiagramEditorInner() {
       pages: pagesForSave.length > 1 ? pagesForSave : undefined,
     };
 
+    setSaveStatus({ state: "saving" });
     try {
       const saved = await apiFetch("/api/infra/diagrams", {
         method: "POST",
@@ -533,10 +573,36 @@ function DiagramEditorInner() {
         }
         return [...prev, saved];
       });
+      setSaveStatus({ state: "saved", at: Date.now() });
     } catch (err) {
       console.error("Save failed:", err);
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setSaveStatus({ state: "error", message });
     }
   }, [diagramId, diagramName, getNodes, getEdges, pages, activePageId]);
+
+  // Clear the transient "Saved" pill after a few seconds; error/saving states
+  // stay put until the user acts (retries, or the next save clears them).
+  useEffect(() => {
+    if (saveStatus.state !== "saved") return;
+    const t = setTimeout(() => setSaveStatus({ state: "idle" }), 4000);
+    return () => clearTimeout(t);
+  }, [saveStatus]);
+
+  // ─── Fullscreen toggle ──────────────────────────────────────────────────
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      editorPageRef.current?.requestFullscreen();
+    }
+  }, []);
 
   // Load diagram
   const loadDiagram = useCallback(
@@ -544,10 +610,11 @@ function DiagramEditorInner() {
       // Legacy/auto diagrams have no `pages` — synthesize a single page so
       // the rest of the editor (page tabs, switchPage, save) doesn't need
       // to special-case "no pages" everywhere.
-      const loadedPages: DiagramPage[] =
+      const rawPages: DiagramPage[] =
         diagram.pages && diagram.pages.length > 0
           ? diagram.pages
           : [{ id: `page-${Date.now()}`, name: "Page 1", nodes: diagram.nodes, edges: diagram.edges }];
+      const loadedPages = rawPages.map((p) => ({ ...p, nodes: normalizeInfraNodeSizes(p.nodes) }));
       setPages(loadedPages);
       setActivePageId(loadedPages[0].id);
       setNodes(loadedPages[0].nodes);
@@ -670,6 +737,7 @@ function DiagramEditorInner() {
             data: resourceToNodeData(r),
             parentId: `group-${vpcId}`,
             extent: "parent" as const,
+            style: { width: INFRA_NODE_DEFAULT_WIDTH, height: INFRA_NODE_DEFAULT_HEIGHT },
           });
           col++;
           if (col >= 4) {
@@ -693,6 +761,7 @@ function DiagramEditorInner() {
             type: "infra",
             position: { x: xPos + col * 180, y: yPos },
             data: resourceToNodeData(r),
+            style: { width: INFRA_NODE_DEFAULT_WIDTH, height: INFRA_NODE_DEFAULT_HEIGHT },
           });
           col++;
           if (col >= 5) {
@@ -1035,6 +1104,33 @@ function DiagramEditorInner() {
     a.click();
   }, [captureDiagramImage, diagramName]);
 
+  // SVG export — same bounds-fitting approach as PNG, but html-to-image's
+  // toSvg keeps the output as scalable vector markup instead of rasterizing,
+  // so it stays crisp at any zoom (useful for dropping into a wiki/doc that
+  // itself supports SVG, unlike PNG/PDF which bake in a fixed resolution).
+  const exportSVG = useCallback(async () => {
+    const viewportEl = reactFlowWrapper.current?.querySelector(".react-flow__viewport") as HTMLElement | null;
+    if (!viewportEl) return;
+    const bounds = getNodesBounds(getNodes());
+    const width = Math.max(Math.round(bounds.width), 100) + 80;
+    const height = Math.max(Math.round(bounds.height), 100) + 80;
+    const transform = getViewportForBounds(bounds, width, height, 0.2, 2, 40);
+    const dataUrl = await toSvg(viewportEl, {
+      backgroundColor: "#0b0e14",
+      width,
+      height,
+      style: {
+        width: `${width}px`,
+        height: `${height}px`,
+        transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
+      },
+    });
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `${diagramName.replace(/\s+/g, "-").toLowerCase()}.svg`;
+    a.click();
+  }, [diagramName, getNodes]);
+
   const exportPDF = useCallback(async () => {
     const result = await captureDiagramImage();
     if (!result) return;
@@ -1150,14 +1246,16 @@ function DiagramEditorInner() {
   }
 
   return (
-    <div className="diagram-editor-page">
+    <div className={`diagram-editor-page${isFullscreen ? " diagram-editor-fullscreen" : ""}`} ref={editorPageRef}>
       <DiagramToolbar
         diagramName={diagramName}
         onNameChange={setDiagramName}
         onSave={saveDiagram}
+        saveStatus={saveStatus}
         onLoad={() => setShowLoadModal(true)}
         onExportJSON={exportJSON}
         onExportPNG={exportPNG}
+        onExportSVG={exportSVG}
         onExportPDF={exportPDF}
         onExportMermaid={exportMermaid}
         onExportCSV={exportCSV}
@@ -1179,6 +1277,8 @@ function DiagramEditorInner() {
         onShowShortcuts={() => setShowShortcuts(true)}
         onShare={() => setShowShareModal(true)}
         shareDisabled={!diagramId}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
       />
 
       <div className="diagram-editor-body">
@@ -1204,6 +1304,7 @@ function DiagramEditorInner() {
             onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
+            connectionMode={ConnectionMode.Loose}
             colorMode="dark"
             proOptions={{ hideAttribution: true }}
             fitView
@@ -1336,6 +1437,10 @@ function DiagramEditorInner() {
         <div className="modal-overlay" onClick={() => setShowLoadModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Load Diagram</h3>
+            <p className="text-dim" style={{ marginTop: -6, marginBottom: 12, fontSize: 12 }}>
+              Every "💾 Save" click stores the diagram on this Remotely server (not a file on your
+              computer) — it's tied to your account and this list is the only place to find it again.
+            </p>
             {savedDiagrams.length === 0 ? (
               <p className="empty-state">No saved diagrams yet.</p>
             ) : (

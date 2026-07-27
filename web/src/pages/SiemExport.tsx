@@ -96,7 +96,7 @@ export default function SiemExport() {
           />
         </div>
 
-        <button className="connect-btn" style={{ width: "auto", marginTop: 14 }} disabled={saving}>
+        <button className="primary" style={{ width: "auto", marginTop: 14 }} disabled={saving}>
           {saving ? "Saving..." : "Save"}
         </button>
 

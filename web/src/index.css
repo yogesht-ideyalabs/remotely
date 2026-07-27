@@ -326,6 +326,21 @@ select {
 }
 select:focus { outline: none; border-color: var(--accent); }
 
+/* Native checkboxes previously rendered with each OS's default blue/white
+   control — the one un-themed input left after `select` and text inputs
+   were both already covered app-wide. accent-color is enough here (no need
+   for a fully hand-built checkbox like the custom `select` chevron above):
+   every evergreen browser themes the native control's check/box/focus-ring
+   from this one property, so it reaches every existing <input type="checkbox">
+   across the admin forms (Roles' allow/deny label pickers, Plugins' event
+   grid, etc.) without touching each usage site. */
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
 button.primary {
   width: 100%;
   padding: 10px 12px;
@@ -364,8 +379,8 @@ button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
   align-items: center;
   justify-content: center;
   font-size: 9px;
-  font-style: italic;
-  font-family: Georgia, serif;
+  font-style: normal;
+  font-weight: 700;
   cursor: help;
   color: var(--text-dim);
   transition: border-color 0.15s ease, color 0.15s ease;
@@ -637,7 +652,8 @@ textarea { font-family: inherit; }
 .plugin-event-category { font-size: 11px; }
 .plugin-event-category-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; cursor: pointer; }
 .plugin-event-list { display: flex; flex-direction: column; gap: 2px; padding-left: 18px; }
-.plugin-event-item { display: flex; align-items: center; gap: 6px; color: var(--text-dim); cursor: pointer; font-family: SF Mono, ui-monospace, monospace; font-size: 10.5px; }
+.plugin-event-item { display: flex; align-items: flex-start; gap: 6px; color: var(--text-dim); cursor: pointer; font-family: SF Mono, ui-monospace, monospace; font-size: 10.5px; min-width: 0; }
+.plugin-event-item span { overflow-wrap: anywhere; }
 .plugin-event-item:hover { color: var(--text); }
 
 .cmdk-section + .cmdk-section { margin-top: 4px; }
@@ -811,9 +827,46 @@ textarea { font-family: inherit; }
   border-bottom: 1px solid var(--panel-border);
   gap: 0.75rem;
   flex-shrink: 0;
+  overflow-x: auto;
+  /* Safety net, not the primary fix — consolidating exports into a dropdown
+     (below) is what actually keeps every action reachable at normal widths.
+     This just guarantees nothing goes fully inaccessible (no scrollbar, no
+     way to reach it) the way the old unbounded button row silently did on
+     anything narrower than ~1900px — every button past "Import from
+     Discovery" was clipped off-screen with zero visual indication. */
 }
+.toolbar-left, .toolbar-right { flex-shrink: 0; }
 .toolbar-left, .toolbar-center, .toolbar-right { display: flex; align-items: center; gap: 0.5rem; }
-.toolbar-divider { width: 1px; height: 24px; background: var(--panel-border); }
+.toolbar-divider { width: 1px; height: 24px; background: var(--panel-border); flex-shrink: 0; }
+
+.save-status { font-size: 0.72rem; white-space: nowrap; padding: 0.15rem 0.1rem; }
+.save-status-saving { color: var(--text-dim); }
+.save-status-saved { color: var(--success, #22c55e); }
+.save-status-error { color: var(--danger); cursor: help; }
+
+.toolbar-dropdown { position: relative; }
+.toolbar-dropdown-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 60;
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35); padding: 0.3rem; min-width: 240px;
+  display: flex; flex-direction: column; gap: 0.1rem;
+}
+.toolbar-dropdown-item {
+  display: flex; align-items: center; gap: 0.5rem; text-align: left;
+  background: none; border: none; color: var(--text); padding: 0.4rem 0.5rem;
+  border-radius: 5px; font-size: 0.78rem; cursor: pointer; white-space: nowrap;
+}
+.toolbar-dropdown-item:hover { background: var(--accent-dim); }
+.toolbar-dropdown-ext {
+  font-family: SF Mono, ui-monospace, monospace; font-size: 0.68rem; color: var(--accent);
+  background: var(--bg); border-radius: 3px; padding: 0.1rem 0.3rem; flex-shrink: 0; min-width: 42px; text-align: center;
+}
+
+/* Fullscreen mode — requestFullscreen() targets .diagram-editor-page itself,
+   so its own height:calc(100vh - 52px) (sized to sit under the app topbar)
+   would leave a dead 52px gap at the bottom of a real fullscreen surface
+   that has no topbar at all. */
+.diagram-editor-fullscreen { height: 100vh !important; }
 .diagram-name-input {
   background: var(--bg); border: 1px solid var(--panel-border);
   color: var(--text); padding: 0.35rem 0.75rem; border-radius: 4px;
@@ -829,6 +882,7 @@ textarea { font-family: inherit; }
 .toolbar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .toolbar-btn:disabled:hover { background: var(--bg); border-color: var(--panel-border); }
 .toolbar-btn-danger:hover { background: rgba(255,91,110,0.1); border-color: var(--danger); color: var(--danger); }
+.toolbar-btn-icon { padding: 0.35rem 0.55rem; font-size: 0.9rem; line-height: 1; }
 
 .diagram-editor-body {
   display: flex;
@@ -970,6 +1024,9 @@ textarea { font-family: inherit; }
   border-radius: 10px;
   padding: 0.5rem 0.65rem;
   min-width: 150px;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -991,13 +1048,15 @@ textarea { font-family: inherit; }
 .infra-node-text { text-align: left; min-width: 0; }
 .infra-node-locked { opacity: 0.85; }
 .infra-node-lock { position: absolute; top: -6px; right: -6px; font-size: 0.7rem; background: var(--panel); border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
-.infra-node-label { font-size: 0.75rem; font-weight: 600; color: var(--text); line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.infra-node-label { font-size: 0.75rem; font-weight: 600; color: var(--text); line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .infra-node-type { font-size: 0.6rem; color: var(--text-dim); margin-top: 0.1rem; text-transform: uppercase; letter-spacing: 0.03em; }
 .infra-handle {
   width: 8px; height: 8px; background: var(--node-accent, var(--accent)); border: 2px solid var(--panel);
   opacity: 0; transition: opacity 0.12s;
 }
 .infra-node:hover .infra-handle, .infra-node-selected .infra-handle { opacity: 1; }
+.infra-resize-line { border-color: var(--node-accent, var(--accent)) !important; }
+.infra-resize-handle { background: var(--node-accent, var(--accent)) !important; width: 8px !important; height: 8px !important; border-radius: 2px !important; }
 
 /* Group Node */
 .group-node-header {
