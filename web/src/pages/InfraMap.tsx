@@ -6,7 +6,13 @@ import { FieldLabel } from "../components/FieldLabel";
 let mermaidInitialized = false;
 function ensureMermaidInitialized() {
   if (mermaidInitialized) return;
-  mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+  // Deliberately NOT "loose" — this diagram's node labels come from
+  // cloud-synced resource names/tags, not just admin-typed text, and
+  // "loose" disables mermaid's own DOMPurify sanitization of the rendered
+  // SVG. Default ("strict") sanitizes; infraDiscovery.ts's
+  // escapeMermaidLabel() is defense-in-depth on top of that, not instead
+  // of it.
+  mermaid.initialize({ startOnLoad: false, theme: "dark" });
   mermaidInitialized = true;
 }
 

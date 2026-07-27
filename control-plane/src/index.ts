@@ -150,6 +150,72 @@ app.use(cors());
 // enough for a small image, not so much it opens up a body-size DoS vector.
 app.use(express.json({ limit: "2mb" }));
 
+// ---------- Login rate limiting ----------
+// Hand-rolled rather than pulling in express-rate-limit — small enough to
+// reason about directly (this project already favors that pattern, see
+// totp.ts's own RFC 6238 implementation). Keyed by IP+username so a
+// distributed attack across many IPs against one account still gets
+// throttled per-account, and one IP hammering many usernames still gets
+// throttled per-IP. Note: `req.ip` reflects the connecting socket, not a
+// real client IP, unless the reverse proxy in front of this in production
+// is configured with Express's `trust proxy` and forwards X-Forwarded-For
+// — without that, every request behind a proxy shares one IP bucket. The
+// username half of the key still limits blind-guessing against one
+// account even in that case.
+interface LoginAttemptState {
+  count: number;
+  firstAttemptAt: number;
+  lockedUntil: number | null;
+}
+const loginAttempts = new Map<string, LoginAttemptState>();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+function loginRateLimitKey(ip: string | undefined, username: string): string {
+  return `${ip ?? "unknown"}:${username.toLowerCase()}`;
+}
+
+function checkLoginRateLimit(key: string): { allowed: boolean; retryAfterSeconds?: number } {
+  const state = loginAttempts.get(key);
+  if (!state?.lockedUntil) return { allowed: true };
+  const now = Date.now();
+  if (state.lockedUntil <= now) {
+    loginAttempts.delete(key);
+    return { allowed: true };
+  }
+  return { allowed: false, retryAfterSeconds: Math.ceil((state.lockedUntil - now) / 1000) };
+}
+
+function recordLoginFailure(key: string) {
+  const now = Date.now();
+  const state = loginAttempts.get(key);
+  if (!state || now - state.firstAttemptAt > LOGIN_WINDOW_MS) {
+    loginAttempts.set(key, { count: 1, firstAttemptAt: now, lockedUntil: null });
+    return;
+  }
+  state.count += 1;
+  if (state.count >= LOGIN_MAX_ATTEMPTS) {
+    state.lockedUntil = now + LOGIN_LOCKOUT_MS;
+  }
+}
+
+function clearLoginAttempts(key: string) {
+  loginAttempts.delete(key);
+}
+
+// Periodic sweep so this Map doesn't grow unbounded on a long-running
+// process — drops anything whose window has fully expired and isn't
+// currently locked out.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, state] of loginAttempts) {
+    const windowExpired = now - state.firstAttemptAt > LOGIN_WINDOW_MS;
+    const lockExpired = !state.lockedUntil || state.lockedUntil <= now;
+    if (windowExpired && lockExpired) loginAttempts.delete(key);
+  }
+}, 60 * 60 * 1000).unref();
+
 // ---------- REST API: auth ----------
 
 function adminFlags(roleNames: string[]) {
@@ -162,12 +228,22 @@ function adminFlags(roleNames: string[]) {
 
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body ?? {};
+  const rlKey = loginRateLimitKey(req.ip, username ?? "");
+  const rl = checkLoginRateLimit(rlKey);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(rl.retryAfterSeconds));
+    res.status(429).json({ error: `Too many failed login attempts. Try again in ${rl.retryAfterSeconds}s.` });
+    return;
+  }
+
   const user = findUser(username ?? "");
   if (!user || !bcrypt.compareSync(password ?? "", user.passwordHash)) {
+    recordLoginFailure(rlKey);
     logAudit(username ?? "unknown", "login_failed", null, "invalid credentials");
     res.status(401).json({ error: "invalid credentials" });
     return;
   }
+  clearLoginAttempts(rlKey);
   if (user.mfaEnabled && user.mfaSecret) {
     logAudit(user.username, "login_mfa_pending", null, "password ok, awaiting MFA code");
     res.json({ mfaRequired: true, mfaToken: signMfaPendingToken(user.username) });
@@ -186,11 +262,25 @@ app.post("/api/login/verify-mfa", (req, res) => {
     res.status(401).json({ error: "invalid or expired MFA challenge" });
     return;
   }
+
+  // A 6-digit TOTP code is a much smaller search space than a password —
+  // same rate limiter, keyed the same way, so this step can't be
+  // blind-guessed any more freely than the password step could.
+  const rlKey = loginRateLimitKey(req.ip, user.username);
+  const rl = checkLoginRateLimit(rlKey);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(rl.retryAfterSeconds));
+    res.status(429).json({ error: `Too many failed attempts. Try again in ${rl.retryAfterSeconds}s.` });
+    return;
+  }
+
   if (!code || !verifyTotp(user.mfaSecret, String(code))) {
+    recordLoginFailure(rlKey);
     logAudit(user.username, "login_failed", null, "invalid MFA code");
     res.status(401).json({ error: "invalid code" });
     return;
   }
+  clearLoginAttempts(rlKey);
   const token = signToken({ sub: user.username, roles: user.roles });
   logAudit(user.username, "login", null, `roles=${user.roles.join(",")} mfa=true`);
   res.json({ token, username: user.username, roles: user.roles, ...adminFlags(user.roles) });
@@ -1788,7 +1878,19 @@ app.get("/api/recordings", requireAuth, requireAdmin, (_req, res) => {
   res.json(files);
 });
 
+// Real session ids are always crypto.randomUUID() output — hex + hyphens
+// only. Without this check, `sessionId=../../audit` resolves outside
+// RECORDINGS_DIR entirely; both routes are already admin-gated, but an
+// admin shouldn't be able to read/delete arbitrary files on the host
+// (including the audit log itself) through an endpoint that's supposed to
+// only ever touch recordings.
+const SAFE_SESSION_ID = /^[a-zA-Z0-9-]+$/;
+
 app.get("/api/recordings/:sessionId", requireAuth, requireAdmin, (req, res) => {
+  if (!SAFE_SESSION_ID.test(req.params.sessionId)) {
+    res.status(400).json({ error: "invalid session id" });
+    return;
+  }
   const filePath = path.join(RECORDINGS_DIR, `${req.params.sessionId}.jsonl`);
   if (!fs.existsSync(filePath)) {
     res.status(404).json({ error: "not found" });
@@ -1804,6 +1906,10 @@ app.get("/api/recordings/:sessionId", requireAuth, requireAdmin, (req, res) => {
 });
 
 app.delete("/api/recordings/:sessionId", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  if (!SAFE_SESSION_ID.test(req.params.sessionId)) {
+    res.status(400).json({ error: "invalid session id" });
+    return;
+  }
   const filePath = path.join(RECORDINGS_DIR, `${req.params.sessionId}.jsonl`);
   if (!fs.existsSync(filePath)) {
     res.status(404).json({ error: "not found" });
@@ -2805,6 +2911,33 @@ app.get("/api/public/diagrams/:token", (req, res) => {
   res.json({ name: diagram.name, nodes: diagram.nodes, edges: diagram.edges, updatedAt: diagram.updatedAt });
 });
 
+// Every one of these has a hardcoded fallback (JWT_SECRET in auth.ts,
+// AGENT_JOIN_TOKEN and SSH_JIT_INTERNAL_TOKEN above) so the demo/dev
+// experience works with zero setup — but those fallback values are public
+// (they're sitting right here in the open-source source), so a real
+// deployment that leaves any of them unset is signing session tokens and
+// authorizing agent/JIT-SSH access with a secret anyone can read on
+// GitHub. This can't safely be a hard refuse-to-boot (would break the
+// demo/dev workflow this whole project is built around), so it's a
+// warning too loud to miss instead.
+function warnAboutUnsetSecrets() {
+  const unset: string[] = [];
+  if (!process.env.JWT_SECRET) unset.push("JWT_SECRET");
+  if (!process.env.AGENT_JOIN_TOKEN) unset.push("AGENT_JOIN_TOKEN");
+  if (!process.env.SSH_JIT_INTERNAL_TOKEN) unset.push("SSH_JIT_INTERNAL_TOKEN");
+  if (unset.length === 0) return;
+  const border = "!".repeat(78);
+  console.warn(`\n${border}`);
+  console.warn("! SECURITY WARNING: using publicly-known default values for:");
+  for (const name of unset) console.warn(`!   - ${name}`);
+  console.warn("! These defaults are visible in this project's public source code.");
+  console.warn("! Fine for local development — DO NOT leave them unset on any");
+  console.warn("! deployment reachable by anyone other than you. Set real random");
+  console.warn("! values for all of the above before exposing this control plane.");
+  console.warn(`${border}\n`);
+}
+
 server.listen(PORT, () => {
   console.log(`Remotely control plane listening on :${PORT}`);
+  warnAboutUnsetSecrets();
 });

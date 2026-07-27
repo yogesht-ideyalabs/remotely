@@ -325,6 +325,20 @@ function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+// Every label below (`r.name`, group names, VPC/subnet names, CIDRs) is
+// resource-derived data — real cloud-sync data ends up here unreviewed,
+// not just admin-typed text. Mermaid's own DOMPurify sanitization (default
+// "strict" securityLevel, see InfraMap.tsx) is the primary defense, but
+// stripping the characters that let a label escape its `["..."]` bracket
+// or inject an HTML tag is cheap defense-in-depth against a resource named
+// something like `foo"]; click x "javascript:..."`.
+function escapeMermaidLabel(s: string): string {
+  return s
+    .replace(/[\r\n]/g, " ")
+    .replace(/"/g, "'")
+    .replace(/[[\]{}<>]/g, "");
+}
+
 function generateMermaidArchitecture(resources: InfraResource[], options: DiagramOptions): string {
   const lines: string[] = ["graph TB"];
 
@@ -333,7 +347,7 @@ function generateMermaidArchitecture(resources: InfraResource[], options: Diagra
 
   for (const [groupName, groupResources] of Object.entries(groups)) {
     const groupId = sanitizeId(groupName);
-    lines.push(`  subgraph ${groupId}["${groupName}"]`);
+    lines.push(`  subgraph ${groupId}["${escapeMermaidLabel(groupName)}"]`);
 
     // Sub-group by type within each group
     const byType = new Map<string, InfraResource[]>();
@@ -347,7 +361,7 @@ function generateMermaidArchitecture(resources: InfraResource[], options: Diagra
       for (const r of typed) {
         const nodeId = sanitizeId(r.externalId);
         const icon = getMermaidIcon(r.type);
-        const label = r.name || r.externalId;
+        const label = escapeMermaidLabel(r.name || r.externalId);
         lines.push(`    ${nodeId}["${icon ? icon + " " : ""}${label}"]`);
       }
     }
@@ -380,8 +394,8 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
 
   for (const vpc of vpcs) {
     const vpcId = sanitizeId(vpc.externalId);
-    const vpcLabel = vpc.name || vpc.externalId;
-    const cidr = (vpc.properties as { cidr?: string }).cidr || "";
+    const vpcLabel = escapeMermaidLabel(vpc.name || vpc.externalId);
+    const cidr = escapeMermaidLabel((vpc.properties as { cidr?: string }).cidr || "");
     lines.push(`  subgraph ${vpcId}["🌐 ${vpcLabel} (${cidr})"]`);
 
     // Subnets within this VPC
@@ -391,8 +405,8 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
 
     for (const subnet of subnets) {
       const subnetId = sanitizeId(subnet.externalId);
-      const subnetLabel = subnet.name || subnet.externalId;
-      const subnetCidr = (subnet.properties as { cidr?: string }).cidr || "";
+      const subnetLabel = escapeMermaidLabel(subnet.name || subnet.externalId);
+      const subnetCidr = escapeMermaidLabel((subnet.properties as { cidr?: string }).cidr || "");
       const isPublic = (subnet.properties as { public?: boolean }).public;
       const icon = isPublic ? "🌍" : "🔒";
       lines.push(`    subgraph ${subnetId}["${icon} ${subnetLabel} (${subnetCidr})"]`);
@@ -404,7 +418,7 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
       for (const r of inSubnet) {
         const nodeId = sanitizeId(r.externalId);
         const nodeIcon = getMermaidIcon(r.type);
-        lines.push(`      ${nodeId}["${nodeIcon ? nodeIcon + " " : ""}${r.name || r.externalId}"]`);
+        lines.push(`      ${nodeId}["${nodeIcon ? nodeIcon + " " : ""}${escapeMermaidLabel(r.name || r.externalId)}"]`);
       }
 
       lines.push("    end");
@@ -416,7 +430,7 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
     );
     for (const igw of igws) {
       const igwId = sanitizeId(igw.externalId);
-      lines.push(`    ${igwId}["🚪 ${igw.name || "IGW"}"]`);
+      lines.push(`    ${igwId}["🚪 ${escapeMermaidLabel(igw.name || "IGW")}"]`);
     }
 
     const nats = resources.filter(
@@ -424,7 +438,7 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
     );
     for (const nat of nats) {
       const natId = sanitizeId(nat.externalId);
-      lines.push(`    ${natId}["🔄 ${nat.name || "NAT GW"}"]`);
+      lines.push(`    ${natId}["🔄 ${escapeMermaidLabel(nat.name || "NAT GW")}"]`);
     }
 
     lines.push("  end");
@@ -436,7 +450,7 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
     for (const r of noVpc) {
       const nodeId = sanitizeId(r.externalId);
       const icon = getMermaidIcon(r.type);
-      lines.push(`    ${nodeId}["${icon ? icon + " " : ""}${r.name || r.externalId}"]`);
+      lines.push(`    ${nodeId}["${icon ? icon + " " : ""}${escapeMermaidLabel(r.name || r.externalId)}"]`);
     }
     lines.push("  end");
   }

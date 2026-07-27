@@ -1051,7 +1051,7 @@ function DiagramEditorInner() {
   const exportHTML = useCallback(async () => {
     const result = await captureDiagramImage();
     if (!result) return;
-    const escapedName = diagramName.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!);
+    const escapedName = diagramName.replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" })[c]!);
     const html = `<!doctype html>
 <html>
 <head>

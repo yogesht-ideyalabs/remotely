@@ -183,7 +183,8 @@ Deliberately **not built** (each is its own multi-day-to-multi-week effort):
 - No persistence beyond the JSONL audit log and SSH recordings — restarting the control plane resets users/roles/connections back to the seed data in `control-plane/src/store.ts`.
 - `guacd`/`rdp-target`/`ssh-target`/`db-target` are Docker containers, not part of `start.sh`/`stop.sh` — `docker start`/`stop` them separately.
 - Delegated-admin scoping on `/api/audit` filters by tenant/connection ownership; the notification bell uses a simpler "your own events only" rule for non-full-admins — intentionally less precise, it's a glanceable feed, not the compliance record.
-- File downloads authenticate via a `?token=` query param (the session JWT lands in server logs / browser history) since `<a href>` navigation can't set an Authorization header — fine for a POC, would want a short-lived signed URL for anything real.
+- File downloads authenticate via a `?token=` query param — this is now a short-lived (60s), path-scoped signed token (`auth.ts`'s `signDownloadToken`/`verifyDownloadToken`), not the long-lived session JWT, so it landing in server logs/browser history is low-stakes.
+- `npm audit` in `web/` reports one HIGH finding for `react-router-dom` (GHSA-qwww-vcr4-c8h2, an RSC-mode CSRF bypass). This app is a plain client-side Vite SPA — it never uses React Router's RSC/server-actions mode — so the vulnerable code path isn't reachable here. Left on the latest version (`7.18.1`) rather than downgrading: every older 7.x release back through 6.0.0 is affected by a much larger set of real, applicable CVEs (XSS, open redirect, even an unauth RCE via `turbo-stream` deserialization) that `npm audit` doesn't surface until you actually install one of those versions and re-scan. Revisit once react-router ships a version ≥7.12 that patches GHSA-qwww-vcr4-c8h2 without reintroducing the older issues.
 
 ## Project layout
 
