@@ -21,17 +21,23 @@ type ConnectionResource struct {
 }
 
 type ConnectionResourceModel struct {
-	ID            types.String `tfsdk:"id"`
-	Hostname      types.String `tfsdk:"hostname"`
-	Type          types.String `tfsdk:"type"`
-	Labels        types.Map    `tfsdk:"labels"`
-	Folder        types.String `tfsdk:"folder"`
-	Host          types.String `tfsdk:"host"`
-	Port          types.Int64  `tfsdk:"port"`
-	Username      types.String `tfsdk:"username"`
-	Password      types.String `tfsdk:"password"`
-	DatabaseName  types.String `tfsdk:"database_name"`
-	AssignedUsers types.List   `tfsdk:"assigned_users"`
+	ID               types.String `tfsdk:"id"`
+	Hostname         types.String `tfsdk:"hostname"`
+	Type             types.String `tfsdk:"type"`
+	Labels           types.Map    `tfsdk:"labels"`
+	Folder           types.String `tfsdk:"folder"`
+	Host             types.String `tfsdk:"host"`
+	Port             types.Int64  `tfsdk:"port"`
+	Username         types.String `tfsdk:"username"`
+	Password         types.String `tfsdk:"password"`
+	DatabaseName     types.String `tfsdk:"database_name"`
+	AssignedUsers    types.List   `tfsdk:"assigned_users"`
+	SshKeyId         types.String `tfsdk:"ssh_key_id"`
+	SshJitEnabled    types.Bool   `tfsdk:"ssh_jit_enabled"`
+	Kubeconfig       types.String `tfsdk:"kubeconfig"`
+	K8sNamespace     types.String `tfsdk:"k8s_namespace"`
+	K8sPodName       types.String `tfsdk:"k8s_pod_name"`
+	K8sContainerName types.String `tfsdk:"k8s_container_name"`
 }
 
 func NewConnectionResource() resource.Resource {
@@ -104,6 +110,36 @@ func (r *ConnectionResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Computed:    true,
 				ElementType: types.StringType,
 			},
+			"ssh_key_id": schema.StringAttribute{
+				Description: "ssh-direct only. ID of a stored SSH key (see the in-app Profile > SSH Keys page) to authenticate with instead of a password. Takes priority over password, but is itself overridden by ssh_jit_enabled.",
+				Optional:    true,
+				Computed:    true,
+			},
+			"ssh_jit_enabled": schema.BoolAttribute{
+				Description: "ssh-direct only. If true, every session mints a fresh ephemeral SSH keypair, JIT-grants it for a few minutes via sshd's AuthorizedKeysCommand, and revokes it on disconnect. Takes priority over both ssh_key_id and password. Requires the target's sshd to be configured for it.",
+				Optional:    true,
+				Computed:    true,
+			},
+			"kubeconfig": schema.StringAttribute{
+				Description: "kubernetes only. Full kubeconfig YAML (same content `kubectl config view --raw` produces). Not returned by the API after being set, same caveat as password.",
+				Optional:    true,
+				Sensitive:   true,
+			},
+			"k8s_namespace": schema.StringAttribute{
+				Description: "kubernetes only. Namespace the target pod lives in.",
+				Optional:    true,
+				Computed:    true,
+			},
+			"k8s_pod_name": schema.StringAttribute{
+				Description: "kubernetes only. The specific pod this connection execs into — one Connection is one specific pod, not a general kubectl-proxy.",
+				Optional:    true,
+				Computed:    true,
+			},
+			"k8s_container_name": schema.StringAttribute{
+				Description: "kubernetes only. Optional — only needed if the pod has more than one container.",
+				Optional:    true,
+				Computed:    true,
+			},
 		},
 	}
 }
@@ -139,7 +175,7 @@ func (r *ConnectionResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	model, diags := connectionToModel(ctx, created, plan.Password)
+	model, diags := connectionToModel(ctx, created, plan.Password, plan.Kubeconfig)
 	resp.Diagnostics.Append(diags...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
@@ -161,7 +197,7 @@ func (r *ConnectionResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	model, diags := connectionToModel(ctx, conn, state.Password)
+	model, diags := connectionToModel(ctx, conn, state.Password, state.Kubeconfig)
 	resp.Diagnostics.Append(diags...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
@@ -185,7 +221,7 @@ func (r *ConnectionResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
-	model, diags := connectionToModel(ctx, updated, plan.Password)
+	model, diags := connectionToModel(ctx, updated, plan.Password, plan.Kubeconfig)
 	resp.Diagnostics.Append(diags...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
@@ -209,15 +245,21 @@ func (r *ConnectionResource) ImportState(ctx context.Context, req resource.Impor
 func modelToConnection(ctx context.Context, m ConnectionResourceModel) (Connection, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	conn := Connection{
-		ID:           m.ID.ValueString(),
-		Hostname:     m.Hostname.ValueString(),
-		Type:         m.Type.ValueString(),
-		Folder:       m.Folder.ValueString(),
-		Host:         m.Host.ValueString(),
-		Port:         int(m.Port.ValueInt64()),
-		Username:     m.Username.ValueString(),
-		Password:     m.Password.ValueString(),
-		DatabaseName: m.DatabaseName.ValueString(),
+		ID:               m.ID.ValueString(),
+		Hostname:         m.Hostname.ValueString(),
+		Type:             m.Type.ValueString(),
+		Folder:           m.Folder.ValueString(),
+		Host:             m.Host.ValueString(),
+		Port:             int(m.Port.ValueInt64()),
+		Username:         m.Username.ValueString(),
+		Password:         m.Password.ValueString(),
+		DatabaseName:     m.DatabaseName.ValueString(),
+		SshKeyId:         m.SshKeyId.ValueString(),
+		SshJitEnabled:    m.SshJitEnabled.ValueBool(),
+		Kubeconfig:       m.Kubeconfig.ValueString(),
+		K8sNamespace:     m.K8sNamespace.ValueString(),
+		K8sPodName:       m.K8sPodName.ValueString(),
+		K8sContainerName: m.K8sContainerName.ValueString(),
 	}
 
 	diags.Append(mapElementsAsIfKnown(ctx, m.Labels, &conn.Labels)...)
@@ -232,7 +274,12 @@ func modelToConnection(ctx context.Context, m ConnectionResourceModel) (Connecti
 	return conn, diags
 }
 
-func connectionToModel(ctx context.Context, c *Connection, password types.String) (ConnectionResourceModel, diag.Diagnostics) {
+// password and kubeconfig are both write-only from the API's perspective
+// (never returned after being set, same as the in-app admin forms) — both
+// are passed through from the caller's plan/state rather than read back
+// from the API response, same reasoning as the pre-existing password
+// handling this follows.
+func connectionToModel(ctx context.Context, c *Connection, password types.String, kubeconfig types.String) (ConnectionResourceModel, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	labels, d := types.MapValueFrom(ctx, types.StringType, c.Labels)
 	diags.Append(d...)
@@ -240,16 +287,22 @@ func connectionToModel(ctx context.Context, c *Connection, password types.String
 	diags.Append(d...)
 
 	return ConnectionResourceModel{
-		ID:            types.StringValue(c.ID),
-		Hostname:      types.StringValue(c.Hostname),
-		Type:          types.StringValue(c.Type),
-		Labels:        labels,
-		Folder:        types.StringValue(c.Folder),
-		Host:          types.StringValue(c.Host),
-		Port:          types.Int64Value(int64(c.Port)),
-		Username:      types.StringValue(c.Username),
-		Password:      password,
-		DatabaseName:  types.StringValue(c.DatabaseName),
-		AssignedUsers: assignedUsers,
+		ID:               types.StringValue(c.ID),
+		Hostname:         types.StringValue(c.Hostname),
+		Type:             types.StringValue(c.Type),
+		Labels:           labels,
+		Folder:           types.StringValue(c.Folder),
+		Host:             types.StringValue(c.Host),
+		Port:             types.Int64Value(int64(c.Port)),
+		Username:         types.StringValue(c.Username),
+		Password:         password,
+		DatabaseName:     types.StringValue(c.DatabaseName),
+		AssignedUsers:    assignedUsers,
+		SshKeyId:         types.StringValue(c.SshKeyId),
+		SshJitEnabled:    types.BoolValue(c.SshJitEnabled),
+		Kubeconfig:       kubeconfig,
+		K8sNamespace:     types.StringValue(c.K8sNamespace),
+		K8sPodName:       types.StringValue(c.K8sPodName),
+		K8sContainerName: types.StringValue(c.K8sContainerName),
 	}, diags
 }

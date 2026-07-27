@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import mermaid from "mermaid";
 import { apiFetch } from "../api";
 import { FieldLabel } from "../components/FieldLabel";
+import { SyncNowModal } from "../components/SyncNowModal";
 
 let mermaidInitialized = false;
 function ensureMermaidInitialized() {
@@ -24,6 +25,7 @@ interface InfraAccount {
   regions: string[];
   accessMode: string;
   agentIds: string[];
+  credentialRef?: string;
   enabled: boolean;
   lastSyncAt: number | null;
   createdAt: number;
@@ -88,6 +90,8 @@ export default function InfraMap() {
     agentIds: "",
     enabled: true,
   });
+
+  const [syncingAccount, setSyncingAccount] = useState<InfraAccount | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -536,6 +540,11 @@ export default function InfraMap() {
                   </div>
                   <div className="account-actions">
                     <span className={`status-dot ${acc.enabled ? "active" : "inactive"}`} />
+                    {acc.accessMode === "api" && (
+                      <button className="btn-sm" onClick={() => setSyncingAccount(acc)}>
+                        🔄 Sync Now
+                      </button>
+                    )}
                     <button className="btn-sm" onClick={() => startEdit(acc)}>
                       Edit
                     </button>
@@ -549,6 +558,14 @@ export default function InfraMap() {
           )}
         </div>
       </div>
+
+      {syncingAccount && (
+        <SyncNowModal
+          account={syncingAccount}
+          onClose={() => setSyncingAccount(null)}
+          onSynced={loadData}
+        />
+      )}
     </div>
   );
 }

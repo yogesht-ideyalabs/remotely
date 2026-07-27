@@ -13,8 +13,8 @@ provider "remotely" {
 }
 
 resource "remotely_organization" "tf_test" {
-  id         = "tf-test-org"
-  name       = "Terraform Test Org"
+  id          = "tf-test-org"
+  name        = "Terraform Test Org"
   brand_color = "#5b8cff"
 }
 
@@ -45,6 +45,23 @@ resource "remotely_connection" "tf_test" {
   username = "demo"
   password = "demo1234"
   folder   = "Terraform"
+  labels = {
+    client = "tf-test-org"
+  }
+}
+
+# kubernetes connections are one specific pod/container, not a general
+# kubectl-proxy — same "one pre-configured target" model as ssh-direct/rdp/
+# database above.
+resource "remotely_connection" "tf_test_k8s" {
+  hostname           = "tf-test-pod"
+  type               = "kubernetes"
+  username           = "exec" # the one fixed login every role needs for kubernetes connections
+  kubeconfig         = file("~/.kube/config")
+  k8s_namespace      = "default"
+  k8s_pod_name       = "my-app-7d9f8c-abcde"
+  k8s_container_name = "app" # optional — only needed if the pod has more than one container
+  folder             = "Terraform"
   labels = {
     client = "tf-test-org"
   }

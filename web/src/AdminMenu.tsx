@@ -24,6 +24,7 @@ export default function AdminMenu() {
   const items: MenuItem[] = [];
   items.push({ to: "/dashboard", label: "Dashboard" });
   items.push({ to: "/admin/infra-map", label: "Infrastructure Map" });
+  items.push({ to: "/admin/snapshots", label: "Snapshots" });
   items.push({ to: "/admin/architecture", label: "Architecture" });
   items.push({ to: "/admin/diagram-editor", label: "Diagram Editor" });
   items.push({ to: "/active-sessions", label: "Active Sessions" });

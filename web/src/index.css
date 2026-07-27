@@ -1333,3 +1333,7 @@ textarea { font-family: inherit; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 100vh; background: var(--bg); color: var(--text); text-align: center; gap: 0.5rem;
 }
+
+/* Sync Now modal (SyncNowModal.tsx) */
+.sync-result { background: var(--bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.5rem 0; }
+.sync-result p { margin: 0 0 0.5rem; font-size: 0.85rem; }

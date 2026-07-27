@@ -246,6 +246,16 @@ type Connection struct {
 	DatabaseName  string            `json:"databaseName,omitempty"`
 	AssignedUsers []string          `json:"assignedUsers"`
 	CreatedAt     int64             `json:"createdAt"`
+	// ssh-direct only.
+	SshKeyId      string `json:"sshKeyId,omitempty"`
+	SshJitEnabled bool   `json:"sshJitEnabled,omitempty"`
+	// kubernetes only — one Connection is one specific pod/container, same
+	// as ssh-direct/rdp/database each being one specific pre-configured
+	// target, not a general kubectl-proxy.
+	Kubeconfig       string `json:"kubeconfig,omitempty"`
+	K8sNamespace     string `json:"k8sNamespace,omitempty"`
+	K8sPodName       string `json:"k8sPodName,omitempty"`
+	K8sContainerName string `json:"k8sContainerName,omitempty"`
 }
 
 func (c *Client) CreateConnection(conn Connection) (*Connection, error) {

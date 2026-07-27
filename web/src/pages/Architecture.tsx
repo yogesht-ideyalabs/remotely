@@ -212,6 +212,7 @@ function ArchitectureInner() {
               nodeTypes={nodeTypes}
               onNodeClick={(_, node) => setSelectedNodeId(node.id)}
               onPaneClick={() => setSelectedNodeId(null)}
+              colorMode="dark"
               proOptions={{ hideAttribution: true }}
               nodesDraggable={false}
               nodesConnectable={false}

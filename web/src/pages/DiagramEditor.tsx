@@ -1204,6 +1204,7 @@ function DiagramEditorInner() {
             onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
+            colorMode="dark"
             proOptions={{ hideAttribution: true }}
             fitView
             snapToGrid

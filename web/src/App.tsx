@@ -25,6 +25,7 @@ import Compliance from "./pages/Compliance";
 import Plugins from "./pages/Plugins";
 import Notifications from "./pages/Notifications";
 import InfraMap from "./pages/InfraMap";
+import Snapshots from "./pages/Snapshots";
 import DiagramEditor from "./pages/DiagramEditor";
 import Architecture from "./pages/Architecture";
 import SharedDiagram from "./pages/SharedDiagram";
@@ -61,6 +62,7 @@ export default function App() {
           <Route path="/watch/:sessionId" element={<WatchSession />} />
           <Route path="/access-requests" element={<AccessRequests />} />
           <Route path="/admin/infra-map" element={<InfraMap />} />
+          <Route path="/admin/snapshots" element={<Snapshots />} />
           <Route path="/admin/diagram-editor" element={<DiagramEditor />} />
           <Route path="/admin/architecture" element={<Architecture />} />
         </Route>
