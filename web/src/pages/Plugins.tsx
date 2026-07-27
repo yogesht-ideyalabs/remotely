@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchPlugins, createPlugin, updatePlugin, deletePlugin, testPlugin, type WebhookPluginView } from "../api";
 import { AUDIT_CATEGORIES } from "../auditCategories";
+import { FieldLabel } from "../components/FieldLabel";
 
 const emptyForm = { name: "", enabled: false, eventTypes: [] as string[], webhookUrl: "", secret: "" };
 
@@ -95,18 +96,33 @@ export default function Plugins() {
         <form className="section-card" onSubmit={save}>
           <h3>{editing === "" ? "New plugin" : "Edit plugin"}</h3>
           <div className="form-row">
-            <input placeholder="plugin name, e.g. Slack — access requests" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ minWidth: 280 }} />
+            <div style={{ minWidth: 280 }}>
+              <FieldLabel label="Plugin name">
+                Just a label for this target on the list below — e.g. <b>Slack — access requests</b>. No effect on
+                delivery.
+              </FieldLabel>
+              <input placeholder="plugin name, e.g. Slack — access requests" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ minWidth: 280 }} />
+            </div>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
               <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} style={{ width: "auto", margin: 0 }} />
               Enabled
             </label>
           </div>
           <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch" }}>
-            <div className="hint">Webhook URL</div>
+            <FieldLabel label="Webhook URL">
+              Where events get POSTed — for Slack, an Incoming Webhook URL from your workspace's App settings
+              (hooks.slack.com/services/...); for PagerDuty, an Events API v2 integration URL; for a custom
+              receiver, any HTTPS endpoint that accepts a signed JSON POST.
+            </FieldLabel>
             <input type="url" placeholder="https://hooks.slack.com/services/..." value={form.webhookUrl} onChange={(e) => setForm({ ...form, webhookUrl: e.target.value })} />
           </div>
           <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch" }}>
-            <div className="hint">Signing secret (leave blank to keep existing when editing)</div>
+            <FieldLabel label="Signing secret">
+              Used to HMAC-SHA256-sign every delivery so your receiver can verify it actually came from here.
+              Generate any long random string yourself — this isn't something you get from Slack/PagerDuty, it's a
+              secret you invent and configure identically on your receiver's verification side. Leave blank when
+              editing to keep the existing one.
+            </FieldLabel>
             <input type="password" placeholder="a long random shared secret" value={form.secret} onChange={(e) => setForm({ ...form, secret: e.target.value })} />
           </div>
           <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch" }}>

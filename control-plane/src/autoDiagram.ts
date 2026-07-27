@@ -284,6 +284,97 @@ function buildDiagram(resources: InfraResource[]): { nodes: DiagramNode[]; edges
   return { nodes, edges: edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target)) };
 }
 
+// ─── Workload nesting (bare-metal host → VM → container) ──────────────────
+// Modeled on Scanopy's "workloads" view: the physical/virtual containment
+// chain, distinct from the network-topology grouping buildDiagram() does.
+// Only populated where host-level discovery exists (VMware ESXi hosts,
+// Proxmox nodes both already record a "runs-in" relationship from their
+// VMs/containers back to the host) — pure cloud-API resources (EC2, Azure
+// VMs, GCE instances) have no discoverable host layer to nest under, so
+// they correctly never appear here regardless of how much AWS/Azure/GCP
+// data exists.
+const HOST_TYPES = new Set(["esxi-host", "proxmox-node"]);
+const NESTING_RELATIONSHIP_TYPES = new Set(["runs-in", "contains"]);
+
+function buildWorkloadDiagram(host: InfraResource, resources: InfraResource[]): { nodes: DiagramNode[]; edges: DiagramEdge[] } {
+  const byExternalId = new Map(resources.map((r) => [r.externalId, r]));
+  const directChildren = resources.filter((r) =>
+    r.relationships.some((rel) => rel.targetResourceId === host.externalId && NESTING_RELATIONSHIP_TYPES.has(rel.type))
+  );
+  const directChildIds = new Set(directChildren.map((c) => c.externalId));
+  // Containers running inside a VM that itself runs on this host — the
+  // second link in the bare-metal → VM → container chain.
+  const grandChildren = resources.filter((r) =>
+    r.relationships.some((rel) => directChildIds.has(rel.targetResourceId) && NESTING_RELATIONSHIP_TYPES.has(rel.type))
+  );
+  const members = [...directChildren, ...grandChildren];
+
+  const nodes: DiagramNode[] = [];
+  const edges: DiagramEdge[] = [];
+  const groupId = `group-host-${host.externalId}`;
+  const cols = Math.min(4, members.length) || 1;
+  const width = Math.max(400, cols * 200);
+  const rows = Math.ceil(members.length / cols);
+  const height = 80 + rows * 100;
+
+  nodes.push({
+    id: groupId,
+    type: "group",
+    position: { x: 50, y: 0 },
+    data: {
+      label: host.name || host.externalId,
+      icon: ICONS[host.type] ?? "🖥️",
+      provider: host.provider,
+      resourceType: host.type,
+      color: "#f59e0b",
+      ...resourceToNodeData(host),
+    },
+    style: { width, height, backgroundColor: "rgba(245, 158, 11, 0.05)", borderRadius: 8, border: "2px dashed rgba(245, 158, 11, 0.3)" },
+  });
+
+  members.forEach((r, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    nodes.push({
+      id: nodeIdFor(r),
+      type: "infra",
+      position: { x: 30 + col * 190, y: 60 + row * 100 },
+      data: resourceToNodeData(r),
+      parentId: groupId,
+      extent: "parent",
+    });
+  });
+
+  for (const r of members) {
+    for (const rel of r.relationships) {
+      if (!NESTING_RELATIONSHIP_TYPES.has(rel.type)) continue;
+      const isHost = rel.targetResourceId === host.externalId;
+      const targetMember = byExternalId.get(rel.targetResourceId);
+      if (isHost) {
+        edges.push({ id: `edge-${nodeIdFor(r)}-${groupId}`, source: nodeIdFor(r), target: groupId, data: { label: rel.type } });
+      } else if (targetMember && members.includes(targetMember)) {
+        edges.push({ id: `edge-${nodeIdFor(r)}-${nodeIdFor(targetMember)}`, source: nodeIdFor(r), target: nodeIdFor(targetMember), data: { label: rel.type } });
+      }
+    }
+  }
+
+  return { nodes, edges };
+}
+
+// ─── Application dependency grouping ───────────────────────────────────────
+// Modeled on Scanopy's "applications" view: services grouped into the
+// logical app they belong to (by tag, since that's the only place this
+// project already records that intent) rather than by cloud/account/type,
+// with dependencies traced BETWEEN apps — not just between individual
+// resources, which by-category/by-account/all already show.
+function appTagOf(r: InfraResource): string | null {
+  const tags = r.tags ?? {};
+  for (const key of ["Application", "application", "App", "app"]) {
+    if (tags[key]) return tags[key];
+  }
+  return null;
+}
+
 // ─── Strategies ───────────────────────────────────────────────────────────
 
 export interface GeneratedAutoDiagram {
@@ -368,6 +459,83 @@ export const AUTO_DIAGRAM_STRATEGIES: DiagramStrategy[] = [
           edges,
         };
       });
+    },
+  },
+  {
+    id: "by-workload",
+    label: "Workload nesting",
+    description: "Bare-metal host → VM → container, the physical/virtual nesting chain. Only populated where host-level discovery exists (VMware/Proxmox) — pure cloud-API resources have no discoverable host layer.",
+    generate: (resources) => {
+      const hosts = resources.filter((r) => HOST_TYPES.has(r.type));
+      return hosts
+        .map((host) => {
+          const { nodes, edges } = buildWorkloadDiagram(host, resources);
+          return {
+            key: `auto:by-workload:${host.externalId}`,
+            name: `Auto: ${host.name || host.externalId} workload`,
+            description: `Bare-metal → VM → container nesting under "${host.name || host.externalId}".`,
+            nodes,
+            edges,
+          };
+        })
+        .filter((d) => d.nodes.length > 1); // skip hosts with no discovered children
+    },
+  },
+  {
+    id: "by-application",
+    label: "By application",
+    description: "One diagram per logical application (grouped by the Application/App tag), plus an overview showing real dependencies between applications rather than individual resources.",
+    generate: (resources) => {
+      const withApp = resources.filter((r) => appTagOf(r));
+      const apps = Array.from(new Set(withApp.map((r) => appTagOf(r)!))).sort();
+      if (apps.length === 0) return [];
+
+      const perApp = apps.map((app) => {
+        const subset = resources.filter((r) => appTagOf(r) === app);
+        const { nodes, edges } = buildDiagram(subset);
+        return {
+          key: `auto:by-application:${app}`,
+          name: `Auto: ${app}`,
+          description: `Every discovered resource tagged as part of the "${app}" application.`,
+          nodes,
+          edges,
+        };
+      });
+
+      // One node per app (not per resource) — edges are real cross-app
+      // relationships pulled up a level, deduplicated regardless of which
+      // direction or which specific resources on each side carried them.
+      const overviewNodes: DiagramNode[] = apps.map((app, i) => ({
+        id: `app-${app}`,
+        type: "infra",
+        position: { x: (i % 4) * 220, y: Math.floor(i / 4) * 140 },
+        data: { label: app, icon: "🧩", provider: "generic", resourceType: "application", color: "#a855f7" },
+      }));
+      const seenPairs = new Set<string>();
+      const overviewEdges: DiagramEdge[] = [];
+      for (const r of withApp) {
+        const sourceApp = appTagOf(r)!;
+        for (const rel of r.relationships) {
+          const target = resources.find((x) => x.externalId === rel.targetResourceId);
+          const targetApp = target ? appTagOf(target) : null;
+          if (!targetApp || targetApp === sourceApp) continue;
+          const pairKey = [sourceApp, targetApp].sort().join("|");
+          if (seenPairs.has(pairKey)) continue;
+          seenPairs.add(pairKey);
+          overviewEdges.push({ id: `edge-app-${pairKey}`, source: `app-${sourceApp}`, target: `app-${targetApp}`, data: { label: "depends-on" } });
+        }
+      }
+
+      return [
+        ...perApp,
+        {
+          key: "auto:by-application:overview",
+          name: "Auto: Applications Overview",
+          description: "Every discovered application, and real dependencies between them.",
+          nodes: overviewNodes,
+          edges: overviewEdges,
+        },
+      ];
     },
   },
 ];

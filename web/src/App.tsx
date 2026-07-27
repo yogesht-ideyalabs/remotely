@@ -27,6 +27,7 @@ import Notifications from "./pages/Notifications";
 import InfraMap from "./pages/InfraMap";
 import DiagramEditor from "./pages/DiagramEditor";
 import Architecture from "./pages/Architecture";
+import SharedDiagram from "./pages/SharedDiagram";
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/sso-callback" element={<SsoCallback />} />
+        <Route path="/share/:token" element={<SharedDiagram />} />
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/resources" replace />} />
           <Route path="/resources" element={<Resources />} />

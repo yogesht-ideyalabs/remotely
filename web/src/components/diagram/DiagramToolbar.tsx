@@ -12,6 +12,9 @@ interface DiagramToolbarProps {
   onExportJSON: () => void;
   onExportPNG: () => void;
   onExportPDF: () => void;
+  onExportMermaid: () => void;
+  onExportCSV: () => void;
+  onExportHTML: () => void;
   onImportDiscovery: () => void;
   onAutoLayout: () => void;
   onClear: () => void;
@@ -24,6 +27,8 @@ interface DiagramToolbarProps {
   onPaste: () => void;
   onDuplicate: () => void;
   onShowShortcuts: () => void;
+  onShare: () => void;
+  shareDisabled: boolean;
 }
 
 export function DiagramToolbar({
@@ -34,6 +39,9 @@ export function DiagramToolbar({
   onExportJSON,
   onExportPNG,
   onExportPDF,
+  onExportMermaid,
+  onExportCSV,
+  onExportHTML,
   onImportDiscovery,
   onAutoLayout,
   onClear,
@@ -46,6 +54,8 @@ export function DiagramToolbar({
   onPaste,
   onDuplicate,
   onShowShortcuts,
+  onShare,
+  shareDisabled,
 }: DiagramToolbarProps) {
   return (
     <div className="diagram-toolbar">
@@ -99,9 +109,26 @@ export function DiagramToolbar({
         <button className="toolbar-btn" onClick={onExportPDF} title="Export as PDF">
           📑 PDF
         </button>
+        <button className="toolbar-btn" onClick={onExportMermaid} title="Export as Mermaid diagram source">
+          🧜 Mermaid
+        </button>
+        <button className="toolbar-btn" onClick={onExportCSV} title="Export resource inventory as CSV">
+          📊 CSV
+        </button>
+        <button className="toolbar-btn" onClick={onExportHTML} title="Export as a self-contained HTML file">
+          🌐 HTML
+        </button>
       </div>
 
       <div className="toolbar-right">
+        <button
+          className="toolbar-btn"
+          onClick={onShare}
+          disabled={shareDisabled}
+          title={shareDisabled ? "Save the diagram first to share it" : "Get a read-only public link (no login required)"}
+        >
+          🔗 Share
+        </button>
         <button className="toolbar-btn" onClick={onShowShortcuts} title="Keyboard shortcuts (?)">
           ⌨️ Shortcuts
         </button>

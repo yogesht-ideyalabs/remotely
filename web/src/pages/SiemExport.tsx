@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchSiemConfig, saveSiemConfig, testSiemConfig, type SiemConfigView, type SiemDeliveryResult } from "../api";
+import { FieldLabel } from "../components/FieldLabel";
 
 export default function SiemExport() {
   const [config, setConfig] = useState<SiemConfigView | null>(null);
@@ -68,7 +69,10 @@ export default function SiemExport() {
         </label>
 
         <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch" }}>
-          <div className="hint">Webhook URL</div>
+          <FieldLabel label="Webhook URL">
+            Your SIEM's HTTP event-intake endpoint — e.g. Splunk's HTTP Event Collector URL, Datadog Logs intake, or
+            any generic log-shipper's ingest URL. Get this from your SIEM's own integration/API settings page.
+          </FieldLabel>
           <input
             type="url"
             placeholder="https://your-siem.example.com/collector"
@@ -78,9 +82,12 @@ export default function SiemExport() {
         </div>
 
         <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch", marginTop: 10 }}>
-          <div className="hint">
-            Signing secret {config?.secretSet && <span>(currently set: {config.secretPreview} — leave blank to keep it)</span>}
-          </div>
+          <FieldLabel label="Signing secret">
+            A shared secret used to HMAC-SHA256-sign every delivery, the same pattern GitHub/Stripe webhooks use — so
+            your receiver can verify events actually came from here. Generate any long random string; configure the
+            identical value on the SIEM side to verify signatures.
+            {config?.secretSet && <> Currently set: <b>{config.secretPreview}</b> — leave blank to keep it.</>}
+          </FieldLabel>
           <input
             type="password"
             placeholder={config?.secretSet ? "•••••••• (unchanged)" : "a long random shared secret"}

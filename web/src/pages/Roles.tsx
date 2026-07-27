@@ -1,22 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchRoles, createRoleApi, updateRoleApi, deleteRoleApi, type Role } from "../api";
-
-// Hover/focus-triggered explanation for a form field — what it means, what
-// format it expects, and what actually happens if you set it. Roles are
-// the one form in this app where nearly every field is a real permission
-// dimension rather than a cosmetic setting, so guessing wrong has actual
-// access-control consequences; a one-line placeholder wasn't enough.
-function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="field-label">
-      <span>{label}</span>
-      <span className="field-tip" tabIndex={0}>
-        <span className="field-tip-icon">i</span>
-        <span className="field-tip-popover">{children}</span>
-      </span>
-    </div>
-  );
-}
+import { FieldLabel } from "../components/FieldLabel";
+import { LabelChips } from "../components/LabelChips";
 
 const emptyForm = {
   name: "",
@@ -353,24 +338,26 @@ export default function Roles() {
                         <b>{r.name}</b>
                         <div className="hint">{r.description}</div>
                       </td>
-                      <td>{Object.keys(r.allowLabels).length === 0 ? "* (all)" : JSON.stringify(r.allowLabels)}</td>
-                      <td>{Object.keys(r.denyLabels).length === 0 ? "—" : JSON.stringify(r.denyLabels)}</td>
+                      <td>{Object.keys(r.allowLabels).length === 0 ? "* (all)" : <LabelChips labels={r.allowLabels} />}</td>
+                      <td>{Object.keys(r.denyLabels).length === 0 ? "—" : <LabelChips labels={r.denyLabels} />}</td>
                       <td>{r.resourceTypes.length === 0 ? "all" : r.resourceTypes.join(", ")}</td>
                       <td>{r.logins.join(", ") || "—"}</td>
                       <td>{r.maxSessionTTLMinutes || "∞"}</td>
                       <td>{r.allowedCIDRs.join(", ") || "any"}</td>
                       <td>{r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : "never"}</td>
-                      <td>{Object.keys(r.manageLabels ?? {}).length === 0 ? "—" : JSON.stringify(r.manageLabels)}</td>
+                      <td>{Object.keys(r.manageLabels ?? {}).length === 0 ? "—" : <LabelChips labels={r.manageLabels} />}</td>
                       <td>{r.allowClipboard === false ? "blocked" : "allowed"}</td>
                       <td>
-                        <button className="link" onClick={() => startEdit(r)}>
-                          edit
-                        </button>
-                        {r.name !== "admin" && (
-                          <button className="danger-link" onClick={() => remove(r.name)}>
-                            delete
+                        <div className="row-actions">
+                          <button className="link" onClick={() => startEdit(r)}>
+                            Edit
                           </button>
-                        )}
+                          {r.name !== "admin" && (
+                            <button className="danger-link" onClick={() => remove(r.name)}>
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

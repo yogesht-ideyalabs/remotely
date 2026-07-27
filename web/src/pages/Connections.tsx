@@ -15,6 +15,8 @@ import {
   type SshKeyMeta,
 } from "../api";
 import { useOrgFilter } from "../OrgContext";
+import { LabelChips } from "../components/LabelChips";
+import { FieldLabel } from "../components/FieldLabel";
 
 const emptyForm = {
   id: "",
@@ -265,53 +267,108 @@ export default function Connections() {
         <form className="section-card" onSubmit={save}>
           <h3>{editing === "" ? "New connection" : `Edit ${editing}`}</h3>
           <div className="form-row">
-            <input
-              placeholder="display name / hostname"
-              value={form.hostname}
-              onChange={(e) => setForm({ ...form, hostname: e.target.value })}
-            />
-            <select
-              value={form.type}
-              onChange={(e) => {
-                const type = e.target.value as ConnectionType;
-                setForm({ ...form, type, port: defaultPorts[type] });
-              }}
-            >
-              <option value="ssh-direct">SSH (direct)</option>
-              <option value="rdp">RDP</option>
-              <option value="database">Database (Postgres)</option>
-              <option value="kubernetes">Kubernetes (pod exec)</option>
-            </select>
-            <select value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })}>
-              <option value="">— no organization —</option>
-              {orgs.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-            <input placeholder="folder, e.g. Servers" value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })} />
+            <div>
+              <FieldLabel label="Display name">
+                What shows up in the Resources list and in every session/audit record. Pick something recognizable —
+                it doesn't have to match the real hostname.
+              </FieldLabel>
+              <input
+                placeholder="display name / hostname"
+                value={form.hostname}
+                onChange={(e) => setForm({ ...form, hostname: e.target.value })}
+              />
+            </div>
+            <div>
+              <FieldLabel label="Type">
+                What protocol Remotely speaks to reach it. Determines which other fields on this form apply, and
+                which client (terminal, RDP console, DB query panel, pod exec) opens on connect.
+              </FieldLabel>
+              <select
+                value={form.type}
+                onChange={(e) => {
+                  const type = e.target.value as ConnectionType;
+                  setForm({ ...form, type, port: defaultPorts[type] });
+                }}
+              >
+                <option value="ssh-direct">SSH (direct)</option>
+                <option value="rdp">RDP</option>
+                <option value="database">Database (Postgres)</option>
+                <option value="kubernetes">Kubernetes (pod exec)</option>
+              </select>
+            </div>
+            <div>
+              <FieldLabel label="Organization">
+                Which tenant this connection belongs to — find it on the <b>Organizations</b> page. Delegated admins
+                only ever see connections tagged with their own organization; leave unset for a connection that
+                isn't tenant-scoped.
+              </FieldLabel>
+              <select value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })}>
+                <option value="">— no organization —</option>
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <FieldLabel label="Folder">
+                Groups this connection with others on the Resources/Connections list, e.g. <b>Servers</b>,{" "}
+                <b>Databases</b>. Purely organizational — has no effect on access.
+              </FieldLabel>
+              <input placeholder="folder, e.g. Servers" value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })} />
+            </div>
           </div>
           {form.type !== "kubernetes" && (
             <div className="form-row">
-              <input placeholder="host" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
-              <input placeholder="port" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} />
-              <input placeholder="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
-              <input
-                placeholder={
-                  form.type === "ssh-direct" && (form.sshKeyId || form.sshJitEnabled)
-                    ? "password (unused for this auth method)"
-                    : editing === ""
-                    ? "password"
-                    : "password (leave blank to keep)"
-                }
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                disabled={form.type === "ssh-direct" && (Boolean(form.sshKeyId) || form.sshJitEnabled)}
-              />
+              <div>
+                <FieldLabel label="Host">
+                  The real hostname or IP address Remotely dials. For a Docker Compose demo target this is usually a
+                  service name (e.g. <b>ssh-target</b>); for real infrastructure, its actual DNS name or IP.
+                </FieldLabel>
+                <input placeholder="host" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
+              </div>
+              <div>
+                <FieldLabel label="Port">
+                  Defaults to the standard port for the selected type (22 for SSH, 3389 for RDP, 5432 for Postgres) —
+                  only change it if the target listens somewhere non-standard.
+                </FieldLabel>
+                <input placeholder="port" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} />
+              </div>
+              <div>
+                <FieldLabel label="Username">
+                  The OS or database login username on the target itself — not a Remotely account. This is who the
+                  session authenticates as once connected.
+                </FieldLabel>
+                <input placeholder="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+              </div>
+              <div>
+                <FieldLabel label="Password">
+                  The credential for the username above. For ssh-direct, only used if the auth method below is set
+                  to Password — ignored (and disabled) for a stored key or JIT ephemeral key.
+                </FieldLabel>
+                <input
+                  placeholder={
+                    form.type === "ssh-direct" && (form.sshKeyId || form.sshJitEnabled)
+                      ? "password (unused for this auth method)"
+                      : editing === ""
+                      ? "password"
+                      : "password (leave blank to keep)"
+                  }
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  disabled={form.type === "ssh-direct" && (Boolean(form.sshKeyId) || form.sshJitEnabled)}
+                />
+              </div>
               {form.type === "database" && (
-                <input placeholder="database name" value={form.databaseName} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
+                <div>
+                  <FieldLabel label="Database name">
+                    The specific Postgres database to connect to on that host — not the server, the individual
+                    database within it (what you'd pass to <code>psql -d</code>).
+                  </FieldLabel>
+                  <input placeholder="database name" value={form.databaseName} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
+                </div>
               )}
             </div>
           )}
@@ -324,14 +381,32 @@ export default function Connections() {
                 </div>
               </div>
               <div className="form-row">
-                <input placeholder="namespace" value={form.k8sNamespace} onChange={(e) => setForm({ ...form, k8sNamespace: e.target.value })} />
-                <input placeholder="pod name" value={form.k8sPodName} onChange={(e) => setForm({ ...form, k8sPodName: e.target.value })} />
-                <input
-                  placeholder="container name (optional — defaults to the pod's first container)"
-                  style={{ minWidth: 320 }}
-                  value={form.k8sContainerName}
-                  onChange={(e) => setForm({ ...form, k8sContainerName: e.target.value })}
-                />
+                <div>
+                  <FieldLabel label="Namespace">
+                    The Kubernetes namespace the pod lives in — find it with <code>kubectl get pods -A</code> under
+                    the <b>NAMESPACE</b> column.
+                  </FieldLabel>
+                  <input placeholder="namespace" value={form.k8sNamespace} onChange={(e) => setForm({ ...form, k8sNamespace: e.target.value })} />
+                </div>
+                <div>
+                  <FieldLabel label="Pod name">
+                    The exact pod to exec into — from <code>kubectl get pods -n &lt;namespace&gt;</code>. This
+                    connection execs into this one pod specifically, not a general kubectl-proxy.
+                  </FieldLabel>
+                  <input placeholder="pod name" value={form.k8sPodName} onChange={(e) => setForm({ ...form, k8sPodName: e.target.value })} />
+                </div>
+                <div>
+                  <FieldLabel label="Container name">
+                    Optional — only needed if the pod has more than one container. From{" "}
+                    <code>kubectl get pod &lt;pod&gt; -o jsonpath='{"{"}.spec.containers[*].name{"}"}'</code>.
+                  </FieldLabel>
+                  <input
+                    placeholder="container name (optional — defaults to the pod's first container)"
+                    style={{ minWidth: 320 }}
+                    value={form.k8sContainerName}
+                    onChange={(e) => setForm({ ...form, k8sContainerName: e.target.value })}
+                  />
+                </div>
               </div>
               <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch" }}>
                 <div className="hint">
@@ -392,7 +467,11 @@ export default function Connections() {
           )}
           <div className="form-row">
             <div style={{ flex: 1, minWidth: 260 }}>
-              <div className="hint">extra labels (JSON) — beyond organization, for finer RBAC matching (region, env, ...)</div>
+              <FieldLabel label="Extra labels (JSON)">
+                Beyond organization, for finer RBAC matching — a role's allow/deny rules can key off any of these,
+                e.g. <code>{"{"}"region":"us-east-1","env":"prod"{"}"}</code>. Pick keys that match what your roles
+                already filter on (check the Roles page's Allow/Deny columns).
+              </FieldLabel>
               <input value={form.extraLabelsJson} onChange={(e) => setForm({ ...form, extraLabelsJson: e.target.value })} />
             </div>
           </div>
@@ -542,7 +621,9 @@ export default function Connections() {
                           </div>
                         )}
                       </td>
-                      <td>{JSON.stringify(c.labels)}</td>
+                      <td>
+                        <LabelChips labels={c.labels} />
+                      </td>
                       <td>
                         <div className="pill-list">
                           {users.map((u) => (
@@ -558,12 +639,14 @@ export default function Connections() {
                         </div>
                       </td>
                       <td>
-                        <button className="link" onClick={() => startEdit(c)}>
-                          edit
-                        </button>
-                        <button className="danger-link" onClick={() => remove(c.id)}>
-                          delete
-                        </button>
+                        <div className="row-actions">
+                          <button className="link" onClick={() => startEdit(c)}>
+                            Edit
+                          </button>
+                          <button className="danger-link" onClick={() => remove(c.id)}>
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

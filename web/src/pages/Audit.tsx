@@ -2,6 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchAudit, type AuditEvent } from "../api";
 import { AUDIT_CATEGORIES, categoryForEventType } from "../auditCategories";
 
+// Full-length UUIDs (connection/diagram/session ids) wrapped to 2-3 lines in
+// this column, making every row a different height and the whole table look
+// uneven. Short, human-chosen resource ids (hostnames) are left alone —
+// only the long generated ones get truncated, with the full value still
+// available via the cell's `title` tooltip.
+function truncateId(id: string | null | undefined): string {
+  if (!id) return "—";
+  return id.length > 20 ? `${id.slice(0, 8)}…` : id;
+}
+
 export default function Audit() {
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +131,9 @@ export default function Audit() {
                 <td>
                   <span className={`event-badge ${e.eventType}`}>{e.eventType}</span>
                 </td>
-                <td>{e.resourceId ?? "—"}</td>
+                <td className="truncate-cell" title={e.resourceId ?? undefined}>
+                  {truncateId(e.resourceId)}
+                </td>
                 <td>{e.details}</td>
               </tr>
             ))}

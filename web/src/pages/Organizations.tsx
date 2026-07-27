@@ -9,6 +9,7 @@ import {
   type Organization,
   type OrgUsage,
 } from "../api";
+import { FieldLabel } from "../components/FieldLabel";
 
 const BRAND_COLORS = ["#5b8cff", "#a26bff", "#22c07d", "#e0a325", "#ef4444", "#14b8a6", "#ec4899", "#6366f1"];
 
@@ -81,12 +82,25 @@ export default function Organizations() {
         <form className="section-card" onSubmit={create}>
           <h3>New organization</h3>
           <div className="form-row">
-            <input
-              placeholder="id, e.g. acme-corp (used as the client label value)"
-              value={form.id}
-              onChange={(e) => setForm({ ...form, id: e.target.value })}
-            />
-            <input placeholder="display name, e.g. Acme Corp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <div>
+              <FieldLabel label="ID">
+                A short, permanent slug (lowercase, hyphens) — this is the exact value that ends up in every
+                connection/user's <code>client</code> label, so roles can scope access to this org by matching it.
+                Can't be changed later.
+              </FieldLabel>
+              <input
+                placeholder="id, e.g. acme-corp (used as the client label value)"
+                value={form.id}
+                onChange={(e) => setForm({ ...form, id: e.target.value })}
+              />
+            </div>
+            <div>
+              <FieldLabel label="Display name">
+                The human-readable name shown throughout the UI — can be changed anytime, has no effect on RBAC
+                matching (that's the ID field).
+              </FieldLabel>
+              <input placeholder="display name, e.g. Acme Corp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
           </div>
           <div className="form-row">
             <button className="primary" style={{ width: "auto", padding: "8px 20px" }}>
@@ -135,12 +149,14 @@ export default function Organizations() {
                     </td>
                     <td>{new Date(o.createdAt).toLocaleDateString()}</td>
                     <td>
-                      <button className="link" onClick={() => setExpanded(expanded === o.id ? null : o.id)}>
-                        {expanded === o.id ? "close" : "manage"}
-                      </button>
-                      <button className="danger-link" onClick={() => remove(o.id)}>
-                        delete
-                      </button>
+                      <div className="row-actions">
+                        <button className="link" onClick={() => setExpanded(expanded === o.id ? null : o.id)}>
+                          {expanded === o.id ? "Close" : "Manage"}
+                        </button>
+                        <button className="danger-link" onClick={() => remove(o.id)}>
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {expanded === o.id && (
@@ -224,6 +240,9 @@ function OrgDetail({ org, onChange }: { org: Organization; onChange: () => void 
             )}
             <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onLogoPicked} />
           </div>
+          <FieldLabel label="Brand name">
+            Replaces "Remotely" in the topbar for this org's members. Leave blank to keep the default app name.
+          </FieldLabel>
           <input placeholder="brand name, e.g. Acme Portal" value={brandName} onChange={(e) => setBrandName(e.target.value)} />
           <div className="hint" style={{ marginTop: 0 }}>
             Brand color

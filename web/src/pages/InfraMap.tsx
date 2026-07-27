@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import mermaid from "mermaid";
 import { apiFetch } from "../api";
+import { FieldLabel } from "../components/FieldLabel";
 
 let mermaidInitialized = false;
 function ensureMermaidInitialized() {
@@ -364,45 +365,82 @@ export default function InfraMap() {
 
         {showAddAccount && (
           <div className="add-account-form">
-            <input
-              placeholder="Account Name (e.g., Production AWS)"
-              value={newAccount.name}
-              onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
-            />
-            <select
-              value={newAccount.provider}
-              onChange={(e) => setNewAccount({ ...newAccount, provider: e.target.value })}
-            >
-              <option value="aws">AWS</option>
-              <option value="azure">Azure</option>
-              <option value="gcp">GCP</option>
-              <option value="vmware">VMware</option>
-              <option value="proxmox">Proxmox</option>
-              <option value="on-prem">On-Premise</option>
-            </select>
-            <input
-              placeholder="Account/Subscription ID"
-              value={newAccount.accountId}
-              onChange={(e) => setNewAccount({ ...newAccount, accountId: e.target.value })}
-            />
-            <input
-              placeholder="Regions (comma-separated, e.g., us-east-1,eu-west-1)"
-              value={newAccount.regions}
-              onChange={(e) => setNewAccount({ ...newAccount, regions: e.target.value })}
-            />
-            <select
-              value={newAccount.accessMode}
-              onChange={(e) => setNewAccount({ ...newAccount, accessMode: e.target.value })}
-            >
-              <option value="agent">Agent-based discovery</option>
-              <option value="api">Direct API access</option>
-            </select>
-            {newAccount.accessMode === "agent" && (
+            <div>
+              <FieldLabel label="Account name">
+                A display name for this project/account — shown throughout the Architecture page and diagrams.
+                Purely organizational, no effect on discovery.
+              </FieldLabel>
               <input
-                placeholder="Agent IDs (comma-separated)"
-                value={newAccount.agentIds}
-                onChange={(e) => setNewAccount({ ...newAccount, agentIds: e.target.value })}
+                placeholder="Account Name (e.g., Production AWS)"
+                value={newAccount.name}
+                onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
               />
+            </div>
+            <div>
+              <FieldLabel label="Provider">
+                Which cloud/platform this account discovers resources from. Determines which sync method (direct API
+                vs agent-based) and which resource types apply.
+              </FieldLabel>
+              <select
+                value={newAccount.provider}
+                onChange={(e) => setNewAccount({ ...newAccount, provider: e.target.value })}
+              >
+                <option value="aws">AWS</option>
+                <option value="azure">Azure</option>
+                <option value="gcp">GCP</option>
+                <option value="vmware">VMware</option>
+                <option value="proxmox">Proxmox</option>
+                <option value="on-prem">On-Premise</option>
+              </select>
+            </div>
+            <div>
+              <FieldLabel label="Account / Subscription ID">
+                The provider's own account identifier — your 12-digit AWS Account ID (top-right of the AWS Console),
+                Azure Subscription ID (Subscriptions blade), or GCP Project ID (top of the Cloud Console).
+              </FieldLabel>
+              <input
+                placeholder="Account/Subscription ID"
+                value={newAccount.accountId}
+                onChange={(e) => setNewAccount({ ...newAccount, accountId: e.target.value })}
+              />
+            </div>
+            <div>
+              <FieldLabel label="Regions">
+                Comma-separated region codes to scan, e.g. <b>us-east-1,eu-west-1</b> for AWS or <b>eastus</b> for
+                Azure. Leave blank to scan every available region — slower, but nothing gets missed.
+              </FieldLabel>
+              <input
+                placeholder="Regions (comma-separated, e.g., us-east-1,eu-west-1)"
+                value={newAccount.regions}
+                onChange={(e) => setNewAccount({ ...newAccount, regions: e.target.value })}
+              />
+            </div>
+            <div>
+              <FieldLabel label="Access mode">
+                <b>Agent-based</b>: an already-connected Remotely agent on your network reports resources it can see
+                (needed for on-prem/VMware/Proxmox). <b>Direct API</b>: the control plane calls the cloud provider's
+                API directly using credentials you supply at sync time — nothing installed on your side.
+              </FieldLabel>
+              <select
+                value={newAccount.accessMode}
+                onChange={(e) => setNewAccount({ ...newAccount, accessMode: e.target.value })}
+              >
+                <option value="agent">Agent-based discovery</option>
+                <option value="api">Direct API access</option>
+              </select>
+            </div>
+            {newAccount.accessMode === "agent" && (
+              <div>
+                <FieldLabel label="Agent IDs">
+                  Comma-separated agent hostnames that should report resources for this account — find exact names
+                  on the <b>Agent Health</b> page.
+                </FieldLabel>
+                <input
+                  placeholder="Agent IDs (comma-separated)"
+                  value={newAccount.agentIds}
+                  onChange={(e) => setNewAccount({ ...newAccount, agentIds: e.target.value })}
+                />
+              </div>
             )}
             <div className="form-actions">
               <button className="btn-primary" onClick={addAccount}>Save</button>

@@ -12,6 +12,7 @@ import {
   type Organization,
 } from "../api";
 import { useOrgFilter } from "../OrgContext";
+import { FieldLabel } from "../components/FieldLabel";
 
 export default function Users() {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
@@ -165,29 +166,49 @@ export default function Users() {
         <form className="section-card" onSubmit={createUser}>
           <h3>New user</h3>
           <div className="form-row">
-            <input
-              placeholder="username"
-              value={form.username}
-              onChange={(e) => setForm({ ...form, username: e.target.value })}
-            />
-            <input
-              placeholder="password"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-            />
-            <select value={form.tenant} onChange={(e) => setForm({ ...form, tenant: e.target.value })}>
-              <option value="">— no organization —</option>
-              {orgs.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
+            <div>
+              <FieldLabel label="Username">
+                The login name this person signs in with — must be unique. Not an email address unless you want it
+                to be; it's just an identifier.
+              </FieldLabel>
+              <input
+                placeholder="username"
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value })}
+              />
+            </div>
+            <div>
+              <FieldLabel label="Password">
+                Their initial login password — they can change it later from their own Profile page. Choose
+                something you can hand off securely, not a permanent shared secret.
+              </FieldLabel>
+              <input
+                placeholder="password"
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+              />
+            </div>
+            <div>
+              <FieldLabel label="Organization">
+                Which tenant this user belongs to — find it on the <b>Organizations</b> page. Determines what a
+                delegated admin for that org can see/manage about this user; leave unset for a full-admin-only
+                account.
+              </FieldLabel>
+              <select value={form.tenant} onChange={(e) => setForm({ ...form, tenant: e.target.value })}>
+                <option value="">— no organization —</option>
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div className="hint" style={{ marginBottom: 8 }}>
-            roles
-          </div>
+          <FieldLabel label="Roles">
+            Permissions are the union of every assigned role's allows, minus any of their denies — assign as many as
+            apply. Find exact role names and what each one actually grants on the <b>Roles</b> page.
+          </FieldLabel>
           <div className="tag-input-list">
             {roles.length === 0 && <div className="hint">No role catalog visible to you — ask a full admin for the exact role name.</div>}
             {roles.map((r) => (
@@ -227,20 +248,30 @@ export default function Users() {
         <form className="section-card" onSubmit={saveEditUser}>
           <h3>Edit {editingUser}</h3>
           <div className="form-row">
-            <select value={editForm.tenant} onChange={(e) => setEditForm({ ...editForm, tenant: e.target.value })}>
-              <option value="">— no organization —</option>
-              {orgs.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-            <input
-              placeholder="new password (leave blank to keep)"
-              type="password"
-              value={editForm.password}
-              onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-            />
+            <div>
+              <FieldLabel label="Organization">
+                Which tenant this user belongs to — find it on the <b>Organizations</b> page.
+              </FieldLabel>
+              <select value={editForm.tenant} onChange={(e) => setEditForm({ ...editForm, tenant: e.target.value })}>
+                <option value="">— no organization —</option>
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <FieldLabel label="New password">
+                Leave blank to keep their current password unchanged — only fill this in to force a reset.
+              </FieldLabel>
+              <input
+                placeholder="new password (leave blank to keep)"
+                type="password"
+                value={editForm.password}
+                onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+              />
+            </div>
           </div>
           <div className="form-row">
             <button className="primary" style={{ width: "auto", padding: "8px 20px" }}>
@@ -328,12 +359,14 @@ export default function Users() {
                   </td>
                   <td>{new Date(u.createdAt).toLocaleDateString()}</td>
                   <td>
-                    <button className="link" onClick={() => startEditUser(u)}>
-                      edit
-                    </button>
-                    <button className="danger-link" onClick={() => removeUser(u.username)}>
-                      delete
-                    </button>
+                    <div className="row-actions">
+                      <button className="link" onClick={() => startEditUser(u)}>
+                        Edit
+                      </button>
+                      <button className="danger-link" onClick={() => removeUser(u.username)}>
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

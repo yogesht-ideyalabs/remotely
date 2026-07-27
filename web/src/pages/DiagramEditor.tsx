@@ -52,6 +52,7 @@ import { KeyboardShortcutsModal } from "../components/diagram/KeyboardShortcutsM
 import { AlignmentGuides } from "../components/diagram/AlignmentGuides";
 import { DiagramVersionHistory } from "../components/diagram/DiagramVersionHistory";
 import { PageTabs } from "../components/diagram/PageTabs";
+import { ShareDiagramModal } from "../components/diagram/ShareDiagramModal";
 
 const SNAP_THRESHOLD = 6;
 
@@ -98,6 +99,7 @@ interface SavedDiagram {
   createdBy: string;
   isAuto?: boolean;
   autoDescription?: string;
+  shareToken?: string;
 }
 
 function defaultPage(): DiagramPage {
@@ -131,6 +133,8 @@ function DiagramEditorInner() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [historyDiagram, setHistoryDiagram] = useState<{ id: string; name: string } | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareToken, setShareToken] = useState<string | undefined>(undefined);
 
   // ─── Multi-page diagrams ────────────────────────────────────────────────
   // Only the active page's content lives in React Flow's own nodes/edges
@@ -550,6 +554,7 @@ function DiagramEditorInner() {
       setEdges(loadedPages[0].edges);
       setDiagramName(diagram.name);
       setDiagramId(diagram.id);
+      setShareToken(diagram.shareToken);
       setShowLoadModal(false);
       setTimeout(() => fitView({ padding: 0.2 }), 100);
     },
@@ -746,6 +751,63 @@ function DiagramEditorInner() {
     URL.revokeObjectURL(url);
   }, [diagramName, getNodes, getEdges]);
 
+  const downloadTextFile = (content: string, filename: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportMermaid = useCallback(() => {
+    const sanitize = (id: string) => id.replace(/[^a-zA-Z0-9_]/g, "_");
+    const label = (n: Node) => String((n.data as { label?: string }).label ?? n.id);
+    const currentNodes = getNodes();
+    const currentEdges = getEdges();
+    const lines = ["graph TD"];
+    const groupedIds = new Set<string>();
+
+    for (const g of currentNodes.filter((n) => n.type === "group")) {
+      lines.push(`  subgraph ${sanitize(g.id)}["${label(g)}"]`);
+      for (const child of currentNodes.filter((n) => n.parentId === g.id)) {
+        groupedIds.add(child.id);
+        lines.push(`    ${sanitize(child.id)}["${label(child)}"]`);
+      }
+      lines.push("  end");
+    }
+    for (const n of currentNodes) {
+      if (n.type === "group" || groupedIds.has(n.id)) continue;
+      lines.push(`  ${sanitize(n.id)}["${label(n)}"]`);
+    }
+    for (const e of currentEdges) {
+      const edgeLabel = (e.data as { label?: string } | undefined)?.label;
+      lines.push(`  ${sanitize(e.source)} -->${edgeLabel ? `|${edgeLabel}|` : ""} ${sanitize(e.target)}`);
+    }
+
+    downloadTextFile(lines.join("\n"), `${diagramName.replace(/\s+/g, "-").toLowerCase()}.mmd`, "text/plain");
+  }, [diagramName, getNodes, getEdges]);
+
+  const exportCSV = useCallback(() => {
+    const csvEscape = (v: unknown): string => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = ["Name", "Resource Type", "Provider", "Region", "Account", "Tags"];
+    const rows = getNodes()
+      .filter((n) => n.type === "infra")
+      .map((n) => {
+        const d = n.data as Record<string, unknown>;
+        const tags = (d.tags as Record<string, string>) || {};
+        const tagsStr = Object.entries(tags)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("; ");
+        return [d.label, d.resourceType, d.provider, d.region, d.accountName, tagsStr].map(csvEscape).join(",");
+      });
+    downloadTextFile([header.join(","), ...rows].join("\n"), `${diagramName.replace(/\s+/g, "-").toLowerCase()}.csv`, "text/csv");
+  }, [diagramName, getNodes]);
+
   // Delete selected nodes/edges
   const deleteSelected = useCallback(() => {
     setNodes((nds) => nds.filter((n) => !n.selected));
@@ -849,6 +911,7 @@ function DiagramEditorInner() {
       setEdges([]);
       setDiagramId(null);
       setDiagramName("Untitled Diagram");
+      setShareToken(undefined);
       const fresh = defaultPage();
       setPages([fresh]);
       setActivePageId(fresh.id);
@@ -981,6 +1044,33 @@ function DiagramEditorInner() {
     pdf.save(`${diagramName.replace(/\s+/g, "-").toLowerCase()}.pdf`);
   }, [captureDiagramImage, diagramName]);
 
+  // A single static HTML file with the diagram baked in as an embedded
+  // image — opens in any browser, no server, no login. Distinct from the
+  // "Share" link above: this is a point-in-time snapshot you attach to an
+  // email or drop in a wiki page; the share link is always live/current.
+  const exportHTML = useCallback(async () => {
+    const result = await captureDiagramImage();
+    if (!result) return;
+    const escapedName = diagramName.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!);
+    const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${escapedName}</title>
+<style>
+  body { margin: 0; background: #0b0e14; display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: -apple-system, sans-serif; }
+  img { max-width: 100%; height: auto; }
+  h1 { color: #e8ecf3; position: fixed; top: 12px; left: 16px; font-size: 14px; margin: 0; }
+</style>
+</head>
+<body>
+<h1>${escapedName}</h1>
+<img src="${result.dataUrl}" width="${result.width}" height="${result.height}" alt="${escapedName}" />
+</body>
+</html>`;
+    downloadTextFile(html, `${diagramName.replace(/\s+/g, "-").toLowerCase()}.html`, "text/html");
+  }, [captureDiagramImage, diagramName]);
+
   // The selected node object
   const selectedNode = selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : null;
 
@@ -1069,6 +1159,9 @@ function DiagramEditorInner() {
         onExportJSON={exportJSON}
         onExportPNG={exportPNG}
         onExportPDF={exportPDF}
+        onExportMermaid={exportMermaid}
+        onExportCSV={exportCSV}
+        onExportHTML={exportHTML}
         onImportDiscovery={() => { setShowImportModal(true); setShowWelcome(false); }}
         onAutoLayout={() => {
           setNodes((nds) => layoutNodes(nds, edges));
@@ -1084,6 +1177,8 @@ function DiagramEditorInner() {
         onPaste={() => pasteClipboard()}
         onDuplicate={duplicateSelected}
         onShowShortcuts={() => setShowShortcuts(true)}
+        onShare={() => setShowShareModal(true)}
+        shareDisabled={!diagramId}
       />
 
       <div className="diagram-editor-body">
@@ -1225,6 +1320,15 @@ function DiagramEditorInner() {
       )}
 
       {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
+
+      {showShareModal && diagramId && (
+        <ShareDiagramModal
+          diagramId={diagramId}
+          existingToken={shareToken}
+          onClose={() => setShowShareModal(false)}
+          onTokenChange={setShareToken}
+        />
+      )}
 
       {/* Load diagram modal */}
       {showLoadModal && (

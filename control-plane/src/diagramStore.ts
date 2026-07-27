@@ -39,6 +39,14 @@ export interface SavedDiagram {
   isAuto?: boolean;
   autoKey?: string;
   autoDescription?: string;
+  // A random, unguessable token that makes this diagram viewable at
+  // /share/:token with no login — for handing a link to a stakeholder who
+  // doesn't have (and shouldn't need) a Remotely account. Absent by
+  // default; only ever set via an explicit admin action, and revocable by
+  // clearing it back to undefined. The public route only ever returns
+  // name/nodes/edges/updatedAt for a diagram matched this way — never the
+  // full admin object (createdBy, autoKey, etc.).
+  shareToken?: string;
 }
 
 export const savedDiagrams: SavedDiagram[] = loadTable<SavedDiagram>("infraDiagrams");
@@ -177,6 +185,28 @@ export function restoreDiagramVersion(diagramId: string, versionId: string, rest
   const version = getDiagramVersion(diagramId, versionId);
   if (!version) return undefined;
   return upsertSavedDiagram(diagramId, { name: version.name, nodes: version.nodes, edges: version.edges, pages: version.pages }, restoredBy);
+}
+
+// ─── Public sharing ─────────────────────────────────────────────────────────
+
+export function generateShareToken(diagramId: string): string | undefined {
+  const diagram = getSavedDiagram(diagramId);
+  if (!diagram) return undefined;
+  diagram.shareToken = crypto.randomUUID().replace(/-/g, "");
+  saveRow("infraDiagrams", diagram.id, diagram);
+  return diagram.shareToken;
+}
+
+export function revokeShareToken(diagramId: string): boolean {
+  const diagram = getSavedDiagram(diagramId);
+  if (!diagram || !diagram.shareToken) return false;
+  delete diagram.shareToken;
+  saveRow("infraDiagrams", diagram.id, diagram);
+  return true;
+}
+
+export function getDiagramByShareToken(token: string): SavedDiagram | undefined {
+  return savedDiagrams.find((d) => d.shareToken === token);
 }
 
 export function deleteSavedDiagram(id: string): SavedDiagram | undefined {

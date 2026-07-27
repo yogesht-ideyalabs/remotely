@@ -337,7 +337,7 @@ infraRouter.get("/snapshots/:fromId/diff/:toId", (req: Request, res: Response) =
 import { syncAwsAccount } from "./infraCloudSync.js";
 import { syncAzureAccount } from "./infraCloudSyncAzure.js";
 import { syncGcpAccount } from "./infraCloudSyncGcp.js";
-import { listSavedDiagrams, getSavedDiagram, upsertSavedDiagram, deleteSavedDiagram, listDiagramVersions, getDiagramVersion, restoreDiagramVersion } from "./diagramStore.js";
+import { listSavedDiagrams, getSavedDiagram, upsertSavedDiagram, deleteSavedDiagram, listDiagramVersions, getDiagramVersion, restoreDiagramVersion, generateShareToken, revokeShareToken } from "./diagramStore.js";
 import { regenerateAutoDiagrams, AUTO_DIAGRAM_STRATEGIES } from "./autoDiagram.js";
 
 infraRouter.get("/diagrams", (_req: Request, res: Response) => {
@@ -355,6 +355,7 @@ infraRouter.get("/diagrams", (_req: Request, res: Response) => {
       nodes: d.nodes,
       edges: d.edges,
       pages: d.pages,
+      shareToken: d.shareToken,
     }))
   );
 });
@@ -443,6 +444,32 @@ infraRouter.post("/diagrams/:id/versions/:versionId/restore", (req: Request, res
   }
   logAudit(authReq.user!.sub, "infra_diagram_version_restored", restored.id, `Restored "${restored.name}" to version ${req.params.versionId}`);
   res.json(restored);
+});
+
+// ─── Public sharing (admin-gated management; the actual public view lives
+// at GET /api/public/diagrams/:token, registered separately in index.ts
+// with no auth at all) ───────────────────────────────────────────────────
+
+infraRouter.post("/diagrams/:id/share", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const token = generateShareToken(req.params.id);
+  if (!token) {
+    res.status(404).json({ error: "Diagram not found" });
+    return;
+  }
+  logAudit(authReq.user!.sub, "infra_diagram_shared", req.params.id, "Generated a public share link");
+  res.json({ token });
+});
+
+infraRouter.delete("/diagrams/:id/share", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const revoked = revokeShareToken(req.params.id);
+  if (!revoked) {
+    res.status(404).json({ error: "Diagram not found or not currently shared" });
+    return;
+  }
+  logAudit(authReq.user!.sub, "infra_diagram_share_revoked", req.params.id, "Revoked the public share link");
+  res.json({ ok: true });
 });
 
 // ─── Auto-generated diagrams ──────────────────────────────────────────────

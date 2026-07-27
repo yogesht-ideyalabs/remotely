@@ -9,6 +9,8 @@ import {
   type AgentHealthInfo,
   type JoinTokenItem,
 } from "../api";
+import { LabelChips } from "../components/LabelChips";
+import { FieldLabel } from "../components/FieldLabel";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -92,7 +94,9 @@ export default function AgentHealth() {
                     />
                   </td>
                   <td>{a.hostname}</td>
-                  <td>{JSON.stringify(a.labels)}</td>
+                  <td>
+                    <LabelChips labels={a.labels} />
+                  </td>
                   <td>
                     {a.version}
                     {a.updateAvailable && (
@@ -186,10 +190,28 @@ function JoinTokensSection() {
       )}
 
       <form className="form-row" onSubmit={create}>
-        <input placeholder="label, e.g. new-client-rollout" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <input placeholder="max uses" type="number" style={{ width: 100 }} value={maxUses} onChange={(e) => setMaxUses(e.target.value)} />
-        <input placeholder="ttl minutes" type="number" style={{ width: 110 }} value={ttlMinutes} onChange={(e) => setTtlMinutes(e.target.value)} />
-        <button className="primary" style={{ width: "auto", padding: "8px 16px" }}>
+        <div>
+          <FieldLabel label="Label">
+            A short, memorable name for this token — e.g. the client or rollout it's for. Shown in the token list
+            below so you can tell tokens apart; purely informational.
+          </FieldLabel>
+          <input placeholder="label, e.g. new-client-rollout" value={label} onChange={(e) => setLabel(e.target.value)} />
+        </div>
+        <div>
+          <FieldLabel label="Max uses">
+            How many agents can register with this exact token before it's exhausted. Use <b>1</b> for a single new
+            agent (the common case); higher for bulk-onboarding a batch at once.
+          </FieldLabel>
+          <input placeholder="max uses" type="number" style={{ width: 100 }} value={maxUses} onChange={(e) => setMaxUses(e.target.value)} />
+        </div>
+        <div>
+          <FieldLabel label="TTL (minutes)">
+            How long the token stays valid before it expires unused. Keep this short — a leaked join token is a
+            credential an attacker could use to register a rogue agent.
+          </FieldLabel>
+          <input placeholder="ttl minutes" type="number" style={{ width: 110 }} value={ttlMinutes} onChange={(e) => setTtlMinutes(e.target.value)} />
+        </div>
+        <button className="primary" style={{ width: "auto", padding: "8px 16px", marginTop: 20 }}>
           Generate token
         </button>
       </form>

@@ -2791,6 +2791,20 @@ initPluginSystem();
 import { infraRouter } from "./infraRoutes.js";
 app.use("/api/infra", infraRouter);
 
+// Public, unauthenticated diagram view — deliberately outside infraRouter's
+// requireAuth/requireAnyAdmin gate. Reachable only by knowing the random
+// share token (see diagramStore.ts's generateShareToken); returns a
+// minimal read-only payload, never the full admin diagram object.
+import { getDiagramByShareToken } from "./diagramStore.js";
+app.get("/api/public/diagrams/:token", (req, res) => {
+  const diagram = getDiagramByShareToken(req.params.token);
+  if (!diagram) {
+    res.status(404).json({ error: "This share link is invalid or has been revoked." });
+    return;
+  }
+  res.json({ name: diagram.name, nodes: diagram.nodes, edges: diagram.edges, updatedAt: diagram.updatedAt });
+});
+
 server.listen(PORT, () => {
   console.log(`Remotely control plane listening on :${PORT}`);
 });

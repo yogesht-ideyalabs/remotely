@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { fetchNotificationHistory, clearNotifications, type NotificationEvent } from "../api";
 
+function truncateId(id: string | null | undefined): string {
+  if (!id) return "—";
+  return id.length > 20 ? `${id.slice(0, 8)}…` : id;
+}
+
 export default function Notifications() {
   const [events, setEvents] = useState<NotificationEvent[] | null>(null);
   const [clearedAt, setClearedAt] = useState(0);
@@ -67,7 +72,9 @@ export default function Notifications() {
                 <td>
                   <span className={`event-badge ${n.eventType}`}>{n.eventType}</span>
                 </td>
-                <td>{n.resourceId ?? "—"}</td>
+                <td className="truncate-cell" title={n.resourceId ?? undefined}>
+                  {truncateId(n.resourceId)}
+                </td>
                 <td>{n.details}</td>
                 <td>{n.ts <= clearedAt ? <span className="hint" style={{ margin: 0 }}>cleared</span> : <span className="label-chip">new</span>}</td>
               </tr>
