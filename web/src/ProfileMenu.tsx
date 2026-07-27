@@ -31,7 +31,7 @@ export default function ProfileMenu() {
         <span className="chev">▾</span>
       </button>
       {open && (
-        <div className="admin-menu-panel profile-menu-panel">
+        <div className="popover-panel profile-menu-panel">
           <a
             onClick={(e) => {
               e.preventDefault();
