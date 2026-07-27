@@ -573,6 +573,35 @@ table.audit-table td { padding: 8px; border-bottom: 1px solid var(--panel-border
 .kpi-value { font-size: 26px; font-weight: 700; line-height: 1.2; }
 .kpi-label { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
+/* ─── Configurable dashboard grid (Dashboard.tsx) ────────────────────────── */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.dashboard-widget { position: relative; margin: 0; }
+.dashboard-widget-small { grid-column: span 1; }
+.dashboard-widget-medium { grid-column: span 2; }
+.dashboard-widget-large { grid-column: span 4; }
+@media (max-width: 900px) {
+  .dashboard-grid { grid-template-columns: repeat(2, 1fr); }
+  .dashboard-widget-medium, .dashboard-widget-large { grid-column: span 2; }
+}
+.dashboard-widget-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 3px;
+}
+.dashboard-widget-controls .btn-sm { padding: 2px 6px; font-size: 11px; }
+
 .section-card { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px; padding: 18px; margin-bottom: 20px; }
 .section-card h3 { margin: 0 0 12px; font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
 button.secondary {

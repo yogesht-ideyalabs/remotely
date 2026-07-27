@@ -31,6 +31,7 @@ function buildAdminItems(session: NonNullable<ReturnType<typeof getSession>>): N
   if (session.isAdmin) {
     items.push({ to: "/admin/roles", label: "Roles", icon: "🛡️" });
     items.push({ to: "/admin/organizations", label: "Organizations", icon: "🏢" });
+    items.push({ to: "/admin/monitors", label: "Uptime Monitors", icon: "🚨" });
     items.push({ to: "/admin/siem", label: "SIEM Export", icon: "📤" });
     items.push({ to: "/admin/compliance", label: "Compliance", icon: "✅" });
     items.push({ to: "/admin/plugins", label: "Plugins", icon: "🧩" });

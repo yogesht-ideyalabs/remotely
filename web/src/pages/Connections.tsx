@@ -30,6 +30,7 @@ const emptyForm = {
   username: "",
   password: "",
   databaseName: "",
+  dbEngine: "postgres" as "postgres" | "mysql",
   sshKeyId: "",
   sshJitEnabled: false,
   kubeconfigText: "",
@@ -100,6 +101,7 @@ export default function Connections() {
       username: c.username,
       password: "",
       databaseName: c.databaseName,
+      dbEngine: c.dbEngine ?? "postgres",
       sshKeyId: c.sshKeyId ?? "",
       sshJitEnabled: Boolean(c.sshJitEnabled),
       kubeconfigText: c.kubeconfig ? decodeURIComponent(escape(atob(c.kubeconfig))) : "",
@@ -137,6 +139,7 @@ export default function Connections() {
       username: form.type === "kubernetes" ? "exec" : form.username,
       ...(form.password ? { password: form.password } : {}),
       databaseName: form.databaseName,
+      dbEngine: form.type === "database" ? form.dbEngine : undefined,
       sshKeyId: form.type === "ssh-direct" ? form.sshKeyId || undefined : undefined,
       sshJitEnabled: form.type === "ssh-direct" ? form.sshJitEnabled : false,
       ...(form.type === "kubernetes"
@@ -292,7 +295,7 @@ export default function Connections() {
               >
                 <option value="ssh-direct">SSH (direct)</option>
                 <option value="rdp">RDP</option>
-                <option value="database">Database (Postgres)</option>
+                <option value="database">Database (PostgreSQL / MySQL)</option>
                 <option value="kubernetes">Kubernetes (pod exec)</option>
               </select>
             </div>
@@ -362,13 +365,22 @@ export default function Connections() {
                 />
               </div>
               {form.type === "database" && (
-                <div>
-                  <FieldLabel label="Database name">
-                    The specific Postgres database to connect to on that host — not the server, the individual
-                    database within it (what you'd pass to <code>psql -d</code>).
-                  </FieldLabel>
-                  <input placeholder="database name" value={form.databaseName} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
-                </div>
+                <>
+                  <div>
+                    <FieldLabel label="Engine">Which database server this is — the query console speaks the right wire protocol for whichever you pick.</FieldLabel>
+                    <select value={form.dbEngine} onChange={(e) => setForm({ ...form, dbEngine: e.target.value as "postgres" | "mysql" })}>
+                      <option value="postgres">PostgreSQL</option>
+                      <option value="mysql">MySQL</option>
+                    </select>
+                  </div>
+                  <div>
+                    <FieldLabel label="Database name">
+                      The specific database to connect to on that host — not the server, the individual database
+                      within it (what you'd pass to <code>{form.dbEngine === "mysql" ? "mysql -D" : "psql -d"}</code>).
+                    </FieldLabel>
+                    <input placeholder="database name" value={form.databaseName} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
+                  </div>
+                </>
               )}
             </div>
           )}

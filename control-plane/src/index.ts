@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { Client as SSHClient } from "ssh2";
-import { Client as PgClient } from "pg";
+import { createDbClient } from "./dbClients.js";
 import { KubeConfig, Exec } from "@kubernetes/client-node";
 import { Writable, PassThrough } from "node:stream";
 import {
@@ -41,11 +41,30 @@ import {
   publicSshKey,
   getSiemConfig,
   setSiemConfig,
+  getSmtpConfig,
+  setSmtpConfig,
+  getDashboardLayout,
+  setDashboardLayout,
   type Role,
   type Connection,
   type ConnectionType,
   type AuditEvent,
+  type SmtpConfig,
 } from "./store.js";
+import {
+  listMonitors,
+  getMonitor,
+  createMonitor,
+  updateMonitor,
+  deleteMonitor,
+  getMonitorChecks,
+  computeUptimePercent,
+  runMonitorCheck,
+  startMonitorScheduler,
+  type Monitor,
+  type MonitorType,
+} from "./monitors.js";
+import { sendAlertEmail, sendTestEmail } from "./alertEmail.js";
 import { signToken, verifyToken, signMfaPendingToken, verifyMfaPendingToken, signDownloadToken, verifyDownloadToken } from "./auth.js";
 import { requireAuth, requireAdmin, requireAnyAdmin, type AuthedRequest } from "./auth.js";
 import { generateBase32Secret, verifyTotp, otpauthUrl } from "./totp.js";
@@ -810,6 +829,7 @@ function connectionFromBody(id: string, body: Record<string, unknown>, createdBy
     k8sNamespace: body.k8sNamespace ? String(body.k8sNamespace) : undefined,
     k8sPodName: body.k8sPodName ? String(body.k8sPodName) : undefined,
     k8sContainerName: body.k8sContainerName ? String(body.k8sContainerName) : undefined,
+    dbEngine: body.dbEngine === "mysql" ? "mysql" : body.dbEngine === "postgres" ? "postgres" : undefined,
   };
 }
 
@@ -1585,7 +1605,29 @@ app.get("/api/admin/dashboard", requireAuth, requireAnyAdmin, (req: AuthedReques
     eventsByHour,
     sessionsByDay,
     recentDenials: events.filter((e) => e.eventType === "access_denied").slice(0, 10),
+    recentActivity: events.slice(0, 15),
+    agentsList: agentsInScope.map((a) => ({ id: a.id, hostname: a.hostname, lastLatencyMs: a.lastLatencyMs, lastSeen: a.lastSeen, connectedAt: a.connectedAt })),
+    // Monitors are a full-admin-only feature (see /api/monitors) — a
+    // delegated admin's dashboard just won't have any to show, same as
+    // every other full-admin-only surface already behaves here.
+    monitorsList: full ? listMonitors().map((m) => ({ id: m.id, name: m.name, type: m.type, status: m.status, uptime24h: computeUptimePercent(m.id, 86_400_000) })) : [],
   });
+});
+
+// Per-user dashboard widget layout — a personal home-dashboard the same way
+// Grafana's own home dashboard is per-user, not a single shared layout
+// every admin is forced into. No default is stored server-side; a user who
+// has never saved a layout gets `null` back and the frontend falls back to
+// its own hardcoded starter set (see DEFAULT_WIDGETS in Dashboard.tsx) —
+// keeps "what a new admin sees on day one" a frontend concern, not
+// something that needs a backend migration if the starter set ever changes.
+app.get("/api/dashboard/layout", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
+  res.json({ widgets: getDashboardLayout(req.user!.sub) ?? null });
+});
+
+app.put("/api/dashboard/layout", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
+  const widgets = Array.isArray(req.body?.widgets) ? req.body.widgets : [];
+  res.json({ widgets: setDashboardLayout(req.user!.sub, widgets) });
 });
 
 // ---------- Compliance report ----------
@@ -1665,6 +1707,165 @@ app.post("/api/admin/siem-config/test", requireAuth, requireAdmin, async (req: A
   const result = await deliverToSiem(testEvent);
   logAudit(req.user!.sub, "siem_test_sent", null, result.ok ? `delivered, HTTP ${result.status}` : `failed: ${result.error}`);
   res.json(result);
+});
+
+// ---------- SMTP alert email config ----------
+// Same write-only-password / redact-then-return pattern as siem-config's
+// secret field above — the raw password is never sent back to the browser
+// after being set.
+
+function redactSmtpConfig(config: SmtpConfig | null) {
+  if (!config) return null;
+  return {
+    ...config,
+    password: undefined,
+    passwordSet: config.password.length > 0,
+  };
+}
+
+app.get("/api/admin/smtp-config", requireAuth, requireAdmin, (_req, res) => {
+  res.json(redactSmtpConfig(getSmtpConfig()));
+});
+
+app.post("/api/admin/smtp-config", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const body = (req.body ?? {}) as Partial<SmtpConfig>;
+  const host = String(body.host ?? "").trim();
+  const port = Number(body.port) || 0;
+  const toAddresses = Array.isArray(body.toAddresses) ? body.toAddresses.map(String).filter(Boolean) : [];
+  const existing = getSmtpConfig();
+  const resolvedPassword = typeof body.password === "string" && body.password.length > 0 ? body.password : (existing?.password ?? "");
+  if (body.enabled && (!host || !port)) {
+    res.status(400).json({ error: "host and port required to enable alert email" });
+    return;
+  }
+  if (body.enabled && toAddresses.length === 0) {
+    res.status(400).json({ error: "at least one recipient address required to enable alert email" });
+    return;
+  }
+  const saved = setSmtpConfig(
+    {
+      enabled: Boolean(body.enabled),
+      host,
+      port,
+      secure: Boolean(body.secure),
+      username: String(body.username ?? ""),
+      password: resolvedPassword,
+      fromAddress: String(body.fromAddress ?? ""),
+      toAddresses,
+    },
+    req.user!.sub
+  );
+  logAudit(req.user!.sub, "smtp_config_updated", null, `enabled=${saved.enabled} host=${saved.host || "(none)"}`);
+  res.json(redactSmtpConfig(saved));
+});
+
+app.post("/api/admin/smtp-config/test", requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const config = getSmtpConfig();
+  if (!config?.host) {
+    res.status(400).json({ error: "configure and save SMTP settings first" });
+    return;
+  }
+  const result = await sendTestEmail(config);
+  logAudit(req.user!.sub, "smtp_test_sent", null, result.ok ? "delivered" : `failed: ${result.error}`);
+  res.json(result);
+});
+
+// ---------- Uptime monitors ----------
+// Full-admin only — same reasoning as SIEM/plugins: monitors can probe
+// arbitrary hosts/ports/URLs, which is an operational + minor SSRF-adjacent
+// capability that shouldn't be handed to a delegated (tenant-scoped) admin.
+
+function serializeMonitor(m: Monitor) {
+  return { ...m, uptime24h: computeUptimePercent(m.id, 24 * 60 * 60 * 1000), uptime7d: computeUptimePercent(m.id, 7 * 24 * 60 * 60 * 1000) };
+}
+
+const VALID_MONITOR_TYPES: MonitorType[] = ["http", "tcp", "keyword", "heartbeat"];
+
+function monitorFromBody(body: Record<string, unknown>): { error: string } | { data: ReturnType<typeof buildMonitorData> } {
+  const type = body.type as MonitorType;
+  if (!VALID_MONITOR_TYPES.includes(type)) return { error: `type must be one of ${VALID_MONITOR_TYPES.join(", ")}` };
+  const name = String(body.name ?? "").trim();
+  if (!name) return { error: "name is required" };
+  if ((type === "http" || type === "keyword") && !String(body.url ?? "").trim()) return { error: "url is required for http/keyword monitors" };
+  if (type === "keyword" && !String(body.keyword ?? "").trim()) return { error: "keyword is required for keyword monitors" };
+  if (type === "tcp" && (!String(body.host ?? "").trim() || !Number(body.port))) return { error: "host and port are required for tcp monitors" };
+  if (type === "heartbeat" && !String(body.agentId ?? "").trim()) return { error: "agentId is required for heartbeat monitors" };
+  return { data: buildMonitorData(body, type, name) };
+}
+
+function buildMonitorData(body: Record<string, unknown>, type: MonitorType, name: string) {
+  return {
+    name,
+    type,
+    enabled: body.enabled !== false,
+    intervalSeconds: Math.max(Number(body.intervalSeconds) || 60, 15),
+    timeoutMs: Math.max(Number(body.timeoutMs) || 10_000, 1000),
+    retries: Math.max(Number(body.retries) || 0, 0),
+    url: body.url ? String(body.url) : undefined,
+    expectedStatusMin: body.expectedStatusMin ? Number(body.expectedStatusMin) : undefined,
+    expectedStatusMax: body.expectedStatusMax ? Number(body.expectedStatusMax) : undefined,
+    keyword: body.keyword ? String(body.keyword) : undefined,
+    keywordShouldExist: body.keywordShouldExist !== false,
+    host: body.host ? String(body.host) : undefined,
+    port: body.port ? Number(body.port) : undefined,
+    agentId: body.agentId ? String(body.agentId) : undefined,
+  };
+}
+
+app.get("/api/monitors", requireAuth, requireAdmin, (_req, res) => {
+  res.json(listMonitors().map(serializeMonitor));
+});
+
+app.get("/api/monitors/:id/checks", requireAuth, requireAdmin, (req, res) => {
+  res.json(getMonitorChecks(req.params.id));
+});
+
+app.post("/api/monitors", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const parsed = monitorFromBody(req.body ?? {});
+  if ("error" in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const monitor = createMonitor(parsed.data, req.user!.sub);
+  logAudit(req.user!.sub, "monitor_created", monitor.id, `Created monitor: ${monitor.name} (${monitor.type})`);
+  res.status(201).json(serializeMonitor(monitor));
+});
+
+app.patch("/api/monitors/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const existing = getMonitor(req.params.id);
+  if (!existing) {
+    res.status(404).json({ error: "monitor not found" });
+    return;
+  }
+  const merged = { ...existing, ...(req.body ?? {}) };
+  const parsed = monitorFromBody(merged);
+  if ("error" in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const updated = updateMonitor(req.params.id, parsed.data)!;
+  logAudit(req.user!.sub, "monitor_updated", updated.id, `Updated monitor: ${updated.name}`);
+  res.json(serializeMonitor(updated));
+});
+
+app.delete("/api/monitors/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const removed = deleteMonitor(req.params.id);
+  if (!removed) {
+    res.status(404).json({ error: "monitor not found" });
+    return;
+  }
+  logAudit(req.user!.sub, "monitor_deleted", removed.id, `Deleted monitor: ${removed.name}`);
+  res.json({ ok: true });
+});
+
+app.post("/api/monitors/:id/test", requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const monitor = getMonitor(req.params.id);
+  if (!monitor) {
+    res.status(404).json({ error: "monitor not found" });
+    return;
+  }
+  const updated = await runMonitorCheck(monitor, onMonitorStatusChange);
+  res.json(serializeMonitor(updated));
 });
 
 // ---------- Webhook plugins ----------
@@ -1798,7 +1999,7 @@ app.post("/api/admin/plugins/:id/test", requireAuth, requireAdmin, async (req: A
 // delegated admin sees access-denied/new-connection events for their own
 // tenant, not just their own actions. A plain user (no admin role at all)
 // has no "tenant" to scope by, so they fall back to their own events only.
-const NOTIFICATION_EVENT_TYPES = new Set(["access_denied", "session_ttl_expired", "session_error", "connection_created", "user_created"]);
+const NOTIFICATION_EVENT_TYPES = new Set(["access_denied", "session_ttl_expired", "session_error", "connection_created", "user_created", "monitor_down", "monitor_up"]);
 
 function scopedNotifications(req: AuthedRequest, limitEvents: number): AuditEvent[] {
   const roles = resolveRoles(req.user!.roles);
@@ -2674,13 +2875,13 @@ dbWss.on("connection", async (browserSocket, req) => {
   }
   const target = auth.conn;
 
-  const client = new PgClient({
+  const client = createDbClient(target.dbEngine ?? "postgres", {
     host: target.host,
     port: target.port,
     user: target.username,
     password: target.password,
     database: target.databaseName || undefined,
-    connectionTimeoutMillis: 10000,
+    connectTimeoutMs: 10000,
   });
 
   let ttlTimer: NodeJS.Timeout | undefined;
@@ -2693,7 +2894,7 @@ dbWss.on("connection", async (browserSocket, req) => {
   }
 
   const sessionId = crypto.randomUUID();
-  logAudit(payload.sub, "session_start", target.id, `resource=${target.hostname} type=database login=${target.username} sessionId=${sessionId}`);
+  logAudit(payload.sub, "session_start", target.id, `resource=${target.hostname} type=database engine=${target.dbEngine ?? "postgres"} login=${target.username} sessionId=${sessionId}`);
   browserSocket.send(JSON.stringify({ type: "connected", database: target.databaseName }));
 
   // Recorded as the same {t, dir, data} jsonl format every other session
@@ -2751,7 +2952,7 @@ dbWss.on("connection", async (browserSocket, req) => {
       const result = await client.query(msg.sql);
       const resultPayload = {
         type: "result",
-        columns: result.fields?.map((f) => f.name) ?? [],
+        columns: result.columns,
         rows: result.rows,
         rowCount: result.rowCount,
       };
@@ -2892,6 +3093,20 @@ server.on("upgrade", (req, socket, head) => {
 
 initSiemExport();
 initPluginSystem();
+
+// Fires only on an actual status transition (up->down or down->up), never
+// on every check — matches the semantics of every other audit/notification
+// event in this app, which record state changes, not polling noise.
+function onMonitorStatusChange(monitor: Monitor, previousStatus: Monitor["status"], check: { message: string }) {
+  const eventType = monitor.status === "down" ? "monitor_down" : "monitor_up";
+  logAudit("system", eventType, monitor.id, `${monitor.name}: ${previousStatus} -> ${monitor.status} (${check.message})`);
+  sendAlertEmail(
+    `[Remotely] ${monitor.name} is ${monitor.status === "down" ? "DOWN" : "back UP"}`,
+    `Monitor: ${monitor.name}\nType: ${monitor.type}\nStatus: ${previousStatus} -> ${monitor.status}\nDetail: ${check.message}\nTime: ${new Date().toLocaleString()}`
+  ).catch(() => {});
+}
+
+startMonitorScheduler(onMonitorStatusChange);
 
 // Infrastructure discovery & diagram routes
 import { infraRouter } from "./infraRoutes.js";

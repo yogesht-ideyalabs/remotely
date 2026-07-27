@@ -132,6 +132,12 @@ export interface Connection {
   k8sNamespace?: string;
   k8sPodName?: string;
   k8sContainerName?: string;
+  // database only: which engine to connect with. Optional and defaults to
+  // "postgres" at the point of use (see dbEngineFor in index.ts) rather
+  // than being backfilled here, so every database connection saved before
+  // this field existed keeps working unchanged instead of needing a
+  // migration.
+  dbEngine?: "postgres" | "mysql";
 }
 
 export interface SshKey {
@@ -602,6 +608,55 @@ export function setSiemConfig(patch: { enabled: boolean; webhookUrl: string; sec
   siemConfig = { ...patch, updatedAt: Date.now(), updatedBy };
   saveRow("siemConfig", "global", siemConfig);
   return siemConfig;
+}
+
+// ---------- SMTP config (single global sender, used for monitor alert emails) ----------
+
+export interface SmtpConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean; // true = implicit TLS (typically port 465); false = plain/STARTTLS (587/25)
+  username: string;
+  password: string;
+  fromAddress: string;
+  toAddresses: string[];
+  updatedAt: number;
+  updatedBy: string;
+}
+
+let smtpConfig: SmtpConfig | null = loadTable<SmtpConfig>("smtpConfig")[0] ?? null;
+
+export function getSmtpConfig(): SmtpConfig | null {
+  return smtpConfig;
+}
+
+export function setSmtpConfig(patch: Omit<SmtpConfig, "updatedAt" | "updatedBy">, updatedBy: string): SmtpConfig {
+  smtpConfig = { ...patch, updatedAt: Date.now(), updatedBy };
+  saveRow("smtpConfig", "global", smtpConfig);
+  return smtpConfig;
+}
+
+// ---------- Dashboard widget layout (per-user, like a personal Grafana home dashboard) ----------
+
+export interface DashboardWidgetInstance {
+  id: string; // instance id, distinct from `type` — the same widget type can be added more than once
+  type: string;
+  size: "small" | "medium" | "large";
+}
+
+const dashboardLayouts = new Map<string, DashboardWidgetInstance[]>(
+  loadTable<{ username: string; widgets: DashboardWidgetInstance[] }>("dashboardLayouts").map((r) => [r.username, r.widgets])
+);
+
+export function getDashboardLayout(username: string): DashboardWidgetInstance[] | undefined {
+  return dashboardLayouts.get(username);
+}
+
+export function setDashboardLayout(username: string, widgets: DashboardWidgetInstance[]): DashboardWidgetInstance[] {
+  dashboardLayouts.set(username, widgets);
+  saveRow("dashboardLayouts", username, { username, widgets });
+  return widgets;
 }
 
 // ---------- Webhook plugins (many independent, event-filtered targets —

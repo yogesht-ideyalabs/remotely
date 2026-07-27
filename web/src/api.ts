@@ -242,6 +242,7 @@ export interface Connection {
   k8sNamespace?: string;
   k8sPodName?: string;
   k8sContainerName?: string;
+  dbEngine?: "postgres" | "mysql";
 }
 
 export function fetchConnections(): Promise<Connection[]> {
@@ -601,10 +602,31 @@ export interface DashboardData {
   eventsByHour: { hour: string; login: number; login_failed: number; session_start: number; access_denied: number }[];
   sessionsByDay: { day: string; count: number }[];
   recentDenials: AuditEvent[];
+  recentActivity: AuditEvent[];
+  agentsList: { id: string; hostname: string; lastLatencyMs: number | null; lastSeen: number; connectedAt: number }[];
+  monitorsList: { id: string; name: string; type: string; status: "up" | "down" | "pending"; uptime24h: number | null }[];
 }
 
 export function fetchDashboard(): Promise<DashboardData> {
   return apiFetch("/api/admin/dashboard");
+}
+
+// ---------- Dashboard widget layout (per-user) ----------
+
+export type WidgetSize = "small" | "medium" | "large";
+
+export interface DashboardWidgetInstance {
+  id: string;
+  type: string;
+  size: WidgetSize;
+}
+
+export function fetchDashboardLayout(): Promise<{ widgets: DashboardWidgetInstance[] | null }> {
+  return apiFetch("/api/dashboard/layout");
+}
+
+export function saveDashboardLayout(widgets: DashboardWidgetInstance[]): Promise<{ widgets: DashboardWidgetInstance[] }> {
+  return apiFetch("/api/dashboard/layout", { method: "PUT", body: JSON.stringify({ widgets }) });
 }
 
 // ---------- JIT access requests ----------
@@ -744,4 +766,105 @@ export function deletePlugin(id: string): Promise<null> {
 
 export function testPlugin(id: string): Promise<SiemDeliveryResult> {
   return apiFetch(`/api/admin/plugins/${encodeURIComponent(id)}/test`, { method: "POST" });
+}
+
+// ---------- SMTP alert email config (full-admin only) ----------
+
+export interface SmtpConfigView {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  passwordSet: boolean;
+  fromAddress: string;
+  toAddresses: string[];
+  updatedAt: number | null;
+  updatedBy: string | null;
+}
+
+export function fetchSmtpConfig(): Promise<SmtpConfigView> {
+  return apiFetch("/api/admin/smtp-config");
+}
+
+export function saveSmtpConfig(
+  changes: Omit<SmtpConfigView, "passwordSet" | "updatedAt" | "updatedBy"> & { password?: string }
+): Promise<SmtpConfigView> {
+  return apiFetch("/api/admin/smtp-config", { method: "POST", body: JSON.stringify(changes) });
+}
+
+export function testSmtpConfig(): Promise<SiemDeliveryResult> {
+  return apiFetch("/api/admin/smtp-config/test", { method: "POST" });
+}
+
+// ---------- Uptime monitors (full-admin only) ----------
+
+export type MonitorType = "http" | "tcp" | "keyword" | "heartbeat";
+export type MonitorStatus = "up" | "down" | "pending";
+
+export interface MonitorView {
+  id: string;
+  name: string;
+  type: MonitorType;
+  enabled: boolean;
+  intervalSeconds: number;
+  timeoutMs: number;
+  retries: number;
+  url?: string;
+  expectedStatusMin?: number;
+  expectedStatusMax?: number;
+  keyword?: string;
+  keywordShouldExist?: boolean;
+  host?: string;
+  port?: number;
+  agentId?: string;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  status: MonitorStatus;
+  lastCheckedAt: number | null;
+  lastStatusChangeAt: number | null;
+  consecutiveFailures: number;
+  lastError: string | null;
+  lastResponseTimeMs: number | null;
+  uptime24h: number | null;
+  uptime7d: number | null;
+}
+
+export interface MonitorCheckView {
+  id: string;
+  monitorId: string;
+  ts: number;
+  status: "up" | "down";
+  responseTimeMs: number | null;
+  message: string;
+}
+
+export type MonitorInput = Omit<
+  MonitorView,
+  "id" | "createdBy" | "createdAt" | "updatedAt" | "status" | "lastCheckedAt" | "lastStatusChangeAt" | "consecutiveFailures" | "lastError" | "lastResponseTimeMs" | "uptime24h" | "uptime7d"
+>;
+
+export function fetchMonitors(): Promise<MonitorView[]> {
+  return apiFetch("/api/monitors");
+}
+
+export function fetchMonitorChecks(id: string): Promise<MonitorCheckView[]> {
+  return apiFetch(`/api/monitors/${encodeURIComponent(id)}/checks`);
+}
+
+export function createMonitor(data: MonitorInput): Promise<MonitorView> {
+  return apiFetch("/api/monitors", { method: "POST", body: JSON.stringify(data) });
+}
+
+export function updateMonitor(id: string, changes: Partial<MonitorInput>): Promise<MonitorView> {
+  return apiFetch(`/api/monitors/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(changes) });
+}
+
+export function deleteMonitor(id: string): Promise<null> {
+  return apiFetch(`/api/monitors/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function testMonitor(id: string): Promise<MonitorView> {
+  return apiFetch(`/api/monitors/${encodeURIComponent(id)}/test`, { method: "POST" });
 }

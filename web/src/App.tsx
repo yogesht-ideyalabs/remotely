@@ -29,6 +29,7 @@ import Snapshots from "./pages/Snapshots";
 import DiagramEditor from "./pages/DiagramEditor";
 import Architecture from "./pages/Architecture";
 import SharedDiagram from "./pages/SharedDiagram";
+import Monitors from "./pages/Monitors";
 
 export default function App() {
   return (
@@ -65,6 +66,7 @@ export default function App() {
           <Route path="/admin/snapshots" element={<Snapshots />} />
           <Route path="/admin/diagram-editor" element={<DiagramEditor />} />
           <Route path="/admin/architecture" element={<Architecture />} />
+          <Route path="/admin/monitors" element={<Monitors />} />
         </Route>
       </Routes>
     </BrowserRouter>

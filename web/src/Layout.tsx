@@ -39,6 +39,7 @@ const PAGE_TITLES: [string, string][] = [
   ["/admin/snapshots", "Snapshots"],
   ["/admin/diagram-editor", "Diagram Editor"],
   ["/admin/architecture", "Architecture"],
+  ["/admin/monitors", "Uptime Monitors"],
 ];
 
 function useDocumentTitle(brandName: string) {

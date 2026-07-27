@@ -27,7 +27,7 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 export const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL"); // readers don't block the (rare, admin-driven) writer
 
-const TABLES = ["users", "roles", "connections", "organizations", "sshKeys", "accessRequests", "joinTokens", "agentIdentities", "siemConfig", "infraAccounts", "infraResources", "infraDiagrams", "infraDiagramVersions", "infraSnapshots", "webhookPlugins", "notificationState"] as const;
+const TABLES = ["users", "roles", "connections", "organizations", "sshKeys", "accessRequests", "joinTokens", "agentIdentities", "siemConfig", "infraAccounts", "infraResources", "infraDiagrams", "infraDiagramVersions", "infraSnapshots", "webhookPlugins", "notificationState", "smtpConfig", "monitors", "monitorChecks", "dashboardLayouts"] as const;
 export type TableName = (typeof TABLES)[number];
 
 for (const table of TABLES) {
