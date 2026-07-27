@@ -20,13 +20,29 @@
  */
 
 import { useState } from "react";
-import type { Node } from "@xyflow/react";
+import type { Node, Edge } from "@xyflow/react";
 
 interface NodePropertiesPanelProps {
   node: Node;
   allNodes: Node[];
+  edges: Edge[];
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void;
   onClose: () => void;
+}
+
+interface SecurityGroupRule {
+  protocol: string;
+  fromPort: string;
+  toPort: string;
+  cidrs: string[];
+}
+
+interface NetworkInfo {
+  vpcId?: string;
+  subnetId?: string;
+  privateIps?: string[];
+  publicIps?: string[];
+  securityGroups?: string[];
 }
 
 interface NodeData {
@@ -54,10 +70,28 @@ interface NodeData {
   protocol?: string;
   tags?: Record<string, string>;
   notes?: string;
+  // Discovery-sourced fields (set by DiagramEditor.tsx's resourceToNodeData
+  // / control-plane's autoDiagram.ts — real data from the resource, not
+  // manually typed by whoever's editing the diagram)
+  region?: string;
+  accountId?: string;
+  accountName?: string;
+  networkInfo?: NetworkInfo;
+  inboundRules?: SecurityGroupRule[];
+  outboundRules?: SecurityGroupRule[];
   [key: string]: unknown;
 }
 
-export function NodePropertiesPanel({ node, allNodes, onUpdate, onClose }: NodePropertiesPanelProps) {
+function formatRule(rule: SecurityGroupRule): string {
+  const ports = rule.fromPort && rule.toPort ? (rule.fromPort === rule.toPort ? rule.fromPort : `${rule.fromPort}-${rule.toPort}`) : "all";
+  const proto = rule.protocol === "-1" ? "all" : rule.protocol;
+  const sources = rule.cidrs.length > 0 ? rule.cidrs.join(", ") : "—";
+  return `${proto} : ${ports}  (${sources})`;
+}
+
+const APPEARANCE_PRESETS = ["#5b8cff", "#f97316", "#8b5cf6", "#22c55e", "#eab308", "#06b6d4", "#ef4444", "#64748b"];
+
+export function NodePropertiesPanel({ node, allNodes, edges, onUpdate, onClose }: NodePropertiesPanelProps) {
   const data = node.data as NodeData;
   const [localData, setLocalData] = useState<NodeData>({ ...data });
 
@@ -68,6 +102,19 @@ export function NodePropertiesPanel({ node, allNodes, onUpdate, onClose }: NodeP
   };
 
   const resourceType = localData.resourceType || "other";
+
+  // Real graph connections (from actual canvas edges), not the free-text
+  // "Connected To" field further down — that's a manual note, this is
+  // derived from what's actually drawn on the diagram.
+  const connections = edges
+    .filter((e) => e.source === node.id || e.target === node.id)
+    .map((e) => {
+      const outgoing = e.source === node.id;
+      const otherId = outgoing ? e.target : e.source;
+      const other = allNodes.find((n) => n.id === otherId);
+      const otherLabel = (other?.data as NodeData | undefined)?.label || otherId;
+      return { edgeId: e.id, outgoing, otherLabel, edgeLabel: (e.data as { label?: string } | undefined)?.label || "" };
+    });
 
   return (
     <div className="node-properties-panel">
@@ -80,6 +127,31 @@ export function NodePropertiesPanel({ node, allNodes, onUpdate, onClose }: NodeP
       </div>
 
       <div className="props-body">
+        {/* Shape fill color — the same "Style" concern draw.io/Lucidchart
+            surface for any selected shape, independent of its resource
+            type or discovery-sourced data. */}
+        <div className="props-section">
+          <h4>Appearance</h4>
+          <div className="props-color-swatches">
+            {APPEARANCE_PRESETS.map((c) => (
+              <button
+                key={c}
+                className={`props-color-swatch${localData.color === c ? " active" : ""}`}
+                style={{ background: c }}
+                onClick={() => updateField("color", c)}
+                title={c}
+              />
+            ))}
+            <input
+              type="color"
+              className="props-color-custom"
+              value={localData.color || "#5b8cff"}
+              onChange={(e) => updateField("color", e.target.value)}
+              title="Custom color"
+            />
+          </div>
+        </div>
+
         {/* Basic Info */}
         <div className="props-section">
           <h4>General</h4>
@@ -115,8 +187,111 @@ export function NodePropertiesPanel({ node, allNodes, onUpdate, onClose }: NodeP
           <div className="props-meta">
             <span>Type: {resourceType}</span>
             <span>ID: {node.id.slice(0, 16)}...</span>
+            {localData.region && <span>Region: {localData.region}</span>}
+            {localData.accountName && <span>Account: {localData.accountName}</span>}
           </div>
         </div>
+
+        {/* Real connections, derived from edges actually drawn on the canvas */}
+        <div className="props-section">
+          <h4>Connections ({connections.length})</h4>
+          {connections.length === 0 && <div className="props-empty">Not connected to anything yet — draw an edge from the canvas.</div>}
+          {connections.length > 0 && (
+            <ul className="props-connections">
+              {connections.map((c) => (
+                <li key={c.edgeId}>
+                  <span className="props-conn-arrow">{c.outgoing ? "→" : "←"}</span>
+                  <span className="props-conn-label">{c.otherLabel}</span>
+                  {c.edgeLabel && <span className="props-conn-edge-label">{c.edgeLabel}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Real tags from the discovered resource — every resource type,
+            not just ones with a hand-picked field for it */}
+        {localData.tags && Object.keys(localData.tags).length > 0 && (
+          <div className="props-section">
+            <h4>Tags ({Object.keys(localData.tags).length})</h4>
+            <ul className="props-tags">
+              {Object.entries(localData.tags).map(([key, value]) => (
+                <li key={key}>
+                  <span className="props-tag-key">{key}</span>
+                  <span className="props-tag-value">{value}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Network attachment — VPC/subnet/IPs/attached security groups —
+            for any resource type that has networkInfo, not just the
+            type-specific sections below */}
+        {localData.networkInfo && Object.values(localData.networkInfo).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v))) && (
+          <div className="props-section">
+            <h4>Network</h4>
+            {localData.networkInfo.vpcId && (
+              <div className="props-net-row">
+                <span>VPC</span>
+                <span>{localData.networkInfo.vpcId}</span>
+              </div>
+            )}
+            {localData.networkInfo.subnetId && (
+              <div className="props-net-row">
+                <span>Subnet</span>
+                <span>{localData.networkInfo.subnetId}</span>
+              </div>
+            )}
+            {localData.networkInfo.privateIps && localData.networkInfo.privateIps.length > 0 && (
+              <div className="props-net-row">
+                <span>Private IP</span>
+                <span>{localData.networkInfo.privateIps.join(", ")}</span>
+              </div>
+            )}
+            {localData.networkInfo.publicIps && localData.networkInfo.publicIps.length > 0 && (
+              <div className="props-net-row">
+                <span>Public IP</span>
+                <span>{localData.networkInfo.publicIps.join(", ")}</span>
+              </div>
+            )}
+            {localData.networkInfo.securityGroups && localData.networkInfo.securityGroups.length > 0 && (
+              <div className="props-net-row">
+                <span>Security groups</span>
+                <span>{localData.networkInfo.securityGroups.join(", ")}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Real inbound/outbound rules — only present for security groups
+            discovered via a real cloud sync (see infraCloudSync.ts's
+            parseSecurityGroupRules) */}
+        {((localData.inboundRules && localData.inboundRules.length > 0) || (localData.outboundRules && localData.outboundRules.length > 0)) && (
+          <div className="props-section">
+            <h4>Ports</h4>
+            {localData.inboundRules && localData.inboundRules.length > 0 && (
+              <>
+                <div className="props-rules-label">Inbound</div>
+                <ul className="props-rules">
+                  {localData.inboundRules.map((rule, i) => (
+                    <li key={`in-${i}`}>{formatRule(rule)}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {localData.outboundRules && localData.outboundRules.length > 0 && (
+              <>
+                <div className="props-rules-label">Outbound</div>
+                <ul className="props-rules">
+                  {localData.outboundRules.map((rule, i) => (
+                    <li key={`out-${i}`}>{formatRule(rule)}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Type-specific properties */}
         {(resourceType === "load-balancer") && (

@@ -166,9 +166,23 @@ export function diffSnapshots(fromId: string, toId: string | "current"): Snapsho
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// JSON.stringify's array-replacer trick only sorts/filters the TOP level of
+// keys — any nested object (e.g. `tags`, which nearly every cloud resource
+// has) isn't in that top-level key list, so its own keys get silently
+// stripped to `{}` instead of included. That meant a resource whose only
+// real change was its tags hashed identically before and after, so
+// diffSnapshots would wrongly report it as unchanged. Recurse instead.
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`);
+  return `{${entries.join(",")}}`;
+}
+
 function hashProps(props: Record<string, unknown>): string {
-  const stable = JSON.stringify(props, Object.keys(props).sort());
-  return crypto.createHash("md5").update(stable).digest("hex");
+  return crypto.createHash("md5").update(stableStringify(props)).digest("hex");
 }
 
 function extractKeyProps(r: InfraResource): Record<string, unknown> {

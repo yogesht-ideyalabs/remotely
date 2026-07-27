@@ -13,7 +13,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { requireAuth, type AuthedRequest } from "./auth.js";
+import { requireAuth, requireAnyAdmin, type AuthedRequest } from "./auth.js";
 import { logAudit } from "./store.js";
 import {
   listInfraAccounts,
@@ -31,11 +31,18 @@ import {
   type InfraResourceType,
 } from "./infraDiscovery.js";
 import { loadTable, saveRow, deleteRow } from "./db.js";
+import { seedDemoInfra } from "./demoSeed.js";
+import { broadcastToDiagramViewers } from "./state.js";
 
 export const infraRouter = Router();
 
-// All infra routes require authentication
-infraRouter.use(requireAuth);
+// All infra routes require authentication AND admin/delegated-admin —
+// matches the frontend, which only ever renders "Infrastructure Map" and
+// "Diagram Editor" in AdminMenu.tsx for anyAdmin. Without this, a plain
+// user could bypass the hidden nav entirely and hit these endpoints
+// directly (list every discovered resource, add/remove cloud accounts,
+// trigger real AWS/Azure/GCP syncs) — the UI hiding it isn't enforcement.
+infraRouter.use(requireAuth, requireAnyAdmin);
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
@@ -95,6 +102,7 @@ infraRouter.delete("/accounts/:id", (req: Request, res: Response) => {
   }
 
   logAudit(authReq.user!.sub, "infra_account_deleted", id, `Deleted infra account: ${account?.name}`);
+  regenerateAutoDiagrams();
   res.json({ ok: true });
 });
 
@@ -152,6 +160,11 @@ infraRouter.post("/resources/sync", (req: Request, res: Response) => {
     `Synced ${created} new, ${updated} updated, ${pruned} pruned resources for ${account.name} (${region || "all regions"})`
   );
 
+  // Auto-generated diagrams (by-provider/by-account/by-category/all) never
+  // go stale — regenerated in place on every sync, agent-reported or
+  // direct-API, not just when an admin happens to open the diagram editor.
+  regenerateAutoDiagrams();
+
   res.json({ created, updated, pruned });
 });
 
@@ -177,6 +190,21 @@ infraRouter.post("/diagram", (req: Request, res: Response) => {
 infraRouter.get("/summary", (_req: Request, res: Response) => {
   const summary = getInfraSummary();
   res.json(summary);
+});
+
+// ─── Demo Seed Data ──────────────────────────────────────────────────────────
+
+infraRouter.post("/seed-demo", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const result = seedDemoInfra(authReq.user!.sub);
+  logAudit(
+    authReq.user!.sub,
+    "infra_demo_seeded",
+    null,
+    `Demo infra seeded: ${result.createdAccounts.join(", ") || "none"} (${result.totalResourcesCreated} resources); skipped ${result.skippedAccounts.join(", ") || "none"}`
+  );
+  regenerateAutoDiagrams();
+  res.json(result);
 });
 
 // ─── Cloud Sync (Direct API Mode) ───────────────────────────────────────────
@@ -222,6 +250,7 @@ infraRouter.post("/accounts/:id/sync", async (req: Request, res: Response) => {
       `AWS sync: ${result.totalCreated} new, ${result.totalUpdated} updated, ${result.totalPruned} pruned, ${result.errors.length} errors`
     );
 
+    regenerateAutoDiagrams();
     res.json(result);
   } else if (account.provider === "azure") {
     const { tenantId, clientId, clientSecret, subscriptionIds } = req.body;
@@ -238,6 +267,7 @@ infraRouter.post("/accounts/:id/sync", async (req: Request, res: Response) => {
     });
 
     logAudit(authReq.user!.sub, "infra_cloud_sync_triggered", id, `Azure sync: ${result.totalCreated} new, ${result.totalUpdated} updated`);
+    regenerateAutoDiagrams();
     res.json(result);
   } else if (account.provider === "gcp") {
     const { clientEmail, privateKey, scope: gcpScope } = req.body;
@@ -253,6 +283,7 @@ infraRouter.post("/accounts/:id/sync", async (req: Request, res: Response) => {
     });
 
     logAudit(authReq.user!.sub, "infra_cloud_sync_triggered", id, `GCP sync: ${result.totalCreated} new, ${result.totalUpdated} updated`);
+    regenerateAutoDiagrams();
     res.json(result);
   } else {
     res.status(400).json({ error: `Direct API sync not yet supported for provider: ${account.provider}` });
@@ -303,40 +334,33 @@ infraRouter.get("/snapshots/:fromId/diff/:toId", (req: Request, res: Response) =
 
 // ─── Saved Diagrams (editable canvas state) ──────────────────────────────────
 
-import crypto from "node:crypto";
 import { syncAwsAccount } from "./infraCloudSync.js";
 import { syncAzureAccount } from "./infraCloudSyncAzure.js";
 import { syncGcpAccount } from "./infraCloudSyncGcp.js";
-
-interface SavedDiagram {
-  id: string;
-  name: string;
-  nodes: unknown[];
-  edges: unknown[];
-  createdAt: number;
-  updatedAt: number;
-  createdBy: string;
-}
-
-const savedDiagrams: SavedDiagram[] = loadTable<SavedDiagram>("infraDiagrams");
+import { listSavedDiagrams, getSavedDiagram, upsertSavedDiagram, deleteSavedDiagram, listDiagramVersions, getDiagramVersion, restoreDiagramVersion } from "./diagramStore.js";
+import { regenerateAutoDiagrams, AUTO_DIAGRAM_STRATEGIES } from "./autoDiagram.js";
 
 infraRouter.get("/diagrams", (_req: Request, res: Response) => {
   // Return metadata only (not full node/edge data) for the list view
   res.json(
-    savedDiagrams.map((d) => ({
+    listSavedDiagrams().map((d) => ({
       id: d.id,
       name: d.name,
       createdAt: d.createdAt,
       updatedAt: d.updatedAt,
       createdBy: d.createdBy,
+      isAuto: d.isAuto ?? false,
+      autoKey: d.autoKey,
+      autoDescription: d.autoDescription,
       nodes: d.nodes,
       edges: d.edges,
+      pages: d.pages,
     }))
   );
 });
 
 infraRouter.get("/diagrams/:id", (req: Request, res: Response) => {
-  const diagram = savedDiagrams.find((d) => d.id === req.params.id);
+  const diagram = getSavedDiagram(req.params.id);
   if (!diagram) {
     res.status(404).json({ error: "Diagram not found" });
     return;
@@ -346,53 +370,94 @@ infraRouter.get("/diagrams/:id", (req: Request, res: Response) => {
 
 infraRouter.post("/diagrams", (req: Request, res: Response) => {
   const authReq = req as AuthedRequest;
-  const { id, name, nodes, edges } = req.body;
+  const { id, name, nodes, edges, pages } = req.body;
 
   if (!name || !nodes || !edges) {
     res.status(400).json({ error: "name, nodes, and edges are required" });
     return;
   }
 
-  // Update existing or create new
-  if (id) {
-    const existing = savedDiagrams.find((d) => d.id === id);
-    if (existing) {
-      existing.name = name;
-      existing.nodes = nodes;
-      existing.edges = edges;
-      existing.updatedAt = Date.now();
-      saveRow("infraDiagrams", existing.id, existing);
-      res.json(existing);
-      return;
-    }
+  const existing = id ? getSavedDiagram(id) : undefined;
+  const diagram = upsertSavedDiagram(id, { name, nodes, edges, pages }, authReq.user!.sub);
+  if (!existing) {
+    logAudit(authReq.user!.sub, "infra_diagram_saved", diagram.id, `Saved diagram: ${name}`);
+    res.status(201).json(diagram);
+  } else {
+    // Only overwriting an existing diagram is worth telling other viewers
+    // about — a brand-new diagram has no other viewers yet by definition.
+    // Broadcasts to every open diagram-collab socket for this id, including
+    // the saver's own — there's no clean way to correlate this REST request
+    // to one specific WebSocket connection, so the frontend just ignores
+    // the notification when `by` is its own username instead.
+    broadcastToDiagramViewers(diagram.id, { type: "diagram-updated", by: authReq.user!.sub });
+    res.json(diagram);
   }
-
-  // Create new
-  const diagram: SavedDiagram = {
-    id: crypto.randomUUID(),
-    name,
-    nodes,
-    edges,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    createdBy: authReq.user!.sub,
-  };
-  savedDiagrams.push(diagram);
-  saveRow("infraDiagrams", diagram.id, diagram);
-
-  logAudit(authReq.user!.sub, "infra_diagram_saved", diagram.id, `Saved diagram: ${name}`);
-  res.status(201).json(diagram);
 });
 
 infraRouter.delete("/diagrams/:id", (req: Request, res: Response) => {
   const authReq = req as AuthedRequest;
-  const idx = savedDiagrams.findIndex((d) => d.id === req.params.id);
-  if (idx === -1) {
+  const removed = deleteSavedDiagram(req.params.id);
+  if (!removed) {
     res.status(404).json({ error: "Diagram not found" });
     return;
   }
-  const [removed] = savedDiagrams.splice(idx, 1);
-  deleteRow("infraDiagrams", removed.id);
   logAudit(authReq.user!.sub, "infra_diagram_deleted", removed.id, `Deleted diagram: ${removed.name}`);
   res.json({ ok: true });
+});
+
+// ─── Version history (manual saves only — auto-generated diagrams never
+// version, see diagramStore.ts) ──────────────────────────────────────────
+
+infraRouter.get("/diagrams/:id/versions", (req: Request, res: Response) => {
+  if (!getSavedDiagram(req.params.id)) {
+    res.status(404).json({ error: "Diagram not found" });
+    return;
+  }
+  res.json(
+    listDiagramVersions(req.params.id).map((v) => ({
+      id: v.id,
+      versionNumber: v.versionNumber,
+      name: v.name,
+      savedAt: v.savedAt,
+      savedBy: v.savedBy,
+      nodeCount: v.nodes.length,
+    }))
+  );
+});
+
+infraRouter.get("/diagrams/:id/versions/:versionId", (req: Request, res: Response) => {
+  const version = getDiagramVersion(req.params.id, req.params.versionId);
+  if (!version) {
+    res.status(404).json({ error: "Version not found" });
+    return;
+  }
+  res.json(version);
+});
+
+infraRouter.post("/diagrams/:id/versions/:versionId/restore", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const restored = restoreDiagramVersion(req.params.id, req.params.versionId, authReq.user!.sub);
+  if (!restored) {
+    res.status(404).json({ error: "Diagram or version not found" });
+    return;
+  }
+  logAudit(authReq.user!.sub, "infra_diagram_version_restored", restored.id, `Restored "${restored.name}" to version ${req.params.versionId}`);
+  res.json(restored);
+});
+
+// ─── Auto-generated diagrams ──────────────────────────────────────────────
+// Regenerated automatically after every sync (see the sync routes above and
+// infraCollector's agent-reported path) — this endpoint exists so an admin
+// can also force a refresh on demand (e.g. right after editing tags in the
+// source cloud provider, before the next scheduled sync would pick it up).
+
+infraRouter.get("/diagram-strategies", (_req: Request, res: Response) => {
+  res.json(AUTO_DIAGRAM_STRATEGIES.map((s) => ({ id: s.id, label: s.label, description: s.description })));
+});
+
+infraRouter.post("/diagrams/regenerate", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const result = regenerateAutoDiagrams();
+  logAudit(authReq.user!.sub, "infra_diagrams_regenerated", null, `${result.length} auto diagram(s) regenerated`);
+  res.json({ regenerated: result.length, diagrams: result.map((d) => ({ id: d.id, name: d.name, autoKey: d.autoKey })) });
 });

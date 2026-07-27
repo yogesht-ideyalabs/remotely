@@ -8,10 +8,12 @@ import { getSession } from "../api";
 export default function TerminalPage() {
   const { resourceId } = useParams();
   const [searchParams] = useSearchParams();
-  // "ssh-agent" (reverse-tunnel) and "ssh-direct" (control plane dials out
-  // itself, no agent) are different backend WS handlers but share this
-  // exact same terminal UI.
-  const wsPath = searchParams.get("kind") === "ssh-direct" ? "/ssh-direct-session" : "/session";
+  // "ssh-agent" (reverse-tunnel), "ssh-direct" (control plane dials out
+  // itself, no agent), and "kubernetes" (pod exec) are different backend
+  // WS handlers but share this exact same terminal UI — a real interactive
+  // shell is a real interactive shell regardless of what's on the other end.
+  const kind = searchParams.get("kind");
+  const wsPath = kind === "ssh-direct" ? "/ssh-direct-session" : kind === "kubernetes" ? "/k8s-session" : "/session";
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"connecting" | "open" | "closed" | "error">("connecting");
 

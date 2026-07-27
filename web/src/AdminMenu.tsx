@@ -24,6 +24,7 @@ export default function AdminMenu() {
   const items: MenuItem[] = [];
   items.push({ to: "/dashboard", label: "Dashboard" });
   items.push({ to: "/admin/infra-map", label: "Infrastructure Map" });
+  items.push({ to: "/admin/architecture", label: "Architecture" });
   items.push({ to: "/admin/diagram-editor", label: "Diagram Editor" });
   items.push({ to: "/active-sessions", label: "Active Sessions" });
   items.push({ to: "/audit", label: "Audit Log" });
@@ -35,6 +36,8 @@ export default function AdminMenu() {
     items.push({ to: "/admin/roles", label: "Roles" });
     items.push({ to: "/admin/organizations", label: "Organizations" });
     items.push({ to: "/admin/siem", label: "SIEM Export" });
+    items.push({ to: "/admin/compliance", label: "Compliance" });
+    items.push({ to: "/admin/plugins", label: "Plugins" });
   }
 
   const adminPaths = items.map((i) => i.to);

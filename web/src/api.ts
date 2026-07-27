@@ -220,7 +220,7 @@ export function deleteRoleApi(name: string): Promise<null> {
 
 // ---------- admin: connections ----------
 
-export type ConnectionType = "ssh-direct" | "rdp" | "database";
+export type ConnectionType = "ssh-direct" | "rdp" | "database" | "kubernetes";
 
 export interface Connection {
   id: string;
@@ -238,6 +238,10 @@ export interface Connection {
   createdBy: string;
   sshKeyId?: string;
   sshJitEnabled?: boolean;
+  kubeconfig?: string;
+  k8sNamespace?: string;
+  k8sPodName?: string;
+  k8sContainerName?: string;
 }
 
 export function fetchConnections(): Promise<Connection[]> {
@@ -328,6 +332,19 @@ export interface NotificationEvent {
 
 export function fetchNotifications(): Promise<NotificationEvent[]> {
   return apiFetch("/api/notifications");
+}
+
+export function clearNotifications(): Promise<{ clearedAt: number }> {
+  return apiFetch("/api/notifications/clear", { method: "POST" });
+}
+
+export interface NotificationHistory {
+  clearedAt: number;
+  events: NotificationEvent[];
+}
+
+export function fetchNotificationHistory(days = 30): Promise<NotificationHistory> {
+  return apiFetch(`/api/notifications/history?days=${days}`);
 }
 
 // ---------- agent health ----------
@@ -664,4 +681,67 @@ export function saveSiemConfig(changes: { enabled: boolean; webhookUrl: string; 
 
 export function testSiemConfig(): Promise<SiemDeliveryResult> {
   return apiFetch("/api/admin/siem-config/test", { method: "POST" });
+}
+
+// ---------- compliance report (full-admin only) ----------
+
+export type ControlStatus = "pass" | "warn" | "fail" | "info";
+
+export interface ComplianceControl {
+  id: string;
+  category: string;
+  title: string;
+  description: string;
+  kind: "computed" | "structural";
+  status: ControlStatus;
+  detail: string;
+  enforcedBy?: string;
+}
+
+export interface ComplianceReport {
+  generatedAt: number;
+  controls: ComplianceControl[];
+  summary: { pass: number; warn: number; fail: number; info: number };
+}
+
+export function fetchComplianceReport(): Promise<ComplianceReport> {
+  return apiFetch("/api/admin/compliance");
+}
+
+// ---------- webhook plugins (full-admin only) ----------
+
+export interface WebhookPluginView {
+  id: string;
+  name: string;
+  enabled: boolean;
+  eventTypes: string[];
+  webhookUrl: string;
+  secretSet: boolean;
+  secretPreview: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+}
+
+export function fetchPlugins(): Promise<WebhookPluginView[]> {
+  return apiFetch("/api/admin/plugins");
+}
+
+export function createPlugin(data: { name: string; enabled: boolean; eventTypes: string[]; webhookUrl: string; secret?: string }): Promise<WebhookPluginView> {
+  return apiFetch("/api/admin/plugins", { method: "POST", body: JSON.stringify(data) });
+}
+
+export function updatePlugin(
+  id: string,
+  changes: Partial<{ name: string; enabled: boolean; eventTypes: string[]; webhookUrl: string; secret: string }>
+): Promise<WebhookPluginView> {
+  return apiFetch(`/api/admin/plugins/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(changes) });
+}
+
+export function deletePlugin(id: string): Promise<null> {
+  return apiFetch(`/api/admin/plugins/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function testPlugin(id: string): Promise<SiemDeliveryResult> {
+  return apiFetch(`/api/admin/plugins/${encodeURIComponent(id)}/test`, { method: "POST" });
 }

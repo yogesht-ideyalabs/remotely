@@ -1,5 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
+import mermaid from "mermaid";
 import { apiFetch } from "../api";
+
+let mermaidInitialized = false;
+function ensureMermaidInitialized() {
+  if (mermaidInitialized) return;
+  mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+  mermaidInitialized = true;
+}
 
 interface InfraAccount {
   id: string;
@@ -61,6 +69,19 @@ export default function InfraMap() {
     agentIds: "",
   });
 
+  // Edit account form — same shape as newAccount plus `enabled`, keyed by
+  // the account being edited so multiple cards can't open edit mode at once.
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [editAccount, setEditAccount] = useState({
+    name: "",
+    provider: "aws",
+    accountId: "",
+    regions: "",
+    accessMode: "agent",
+    agentIds: "",
+    enabled: true,
+  });
+
   const loadData = useCallback(async () => {
     try {
       const [accs, sum] = await Promise.all([
@@ -112,6 +133,38 @@ export default function InfraMap() {
       });
       setShowAddAccount(false);
       setNewAccount({ name: "", provider: "aws", accountId: "", regions: "", accessMode: "agent", agentIds: "" });
+      loadData();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const startEdit = (acc: InfraAccount) => {
+    setEditingAccountId(acc.id);
+    setEditAccount({
+      name: acc.name,
+      provider: acc.provider,
+      accountId: acc.accountId,
+      regions: acc.regions.join(", "),
+      accessMode: acc.accessMode,
+      agentIds: acc.agentIds.join(", "),
+      enabled: acc.enabled,
+    });
+    setShowAddAccount(false);
+  };
+
+  const saveEdit = async () => {
+    if (!editingAccountId) return;
+    try {
+      await apiFetch(`/api/infra/accounts/${editingAccountId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          ...editAccount,
+          regions: editAccount.regions.split(",").map((r) => r.trim()).filter(Boolean),
+          agentIds: editAccount.agentIds.split(",").map((r) => r.trim()).filter(Boolean),
+        }),
+      });
+      setEditingAccountId(null);
       loadData();
     } catch (err) {
       setError((err as Error).message);
@@ -275,14 +328,20 @@ export default function InfraMap() {
                   {d.resourceCount} resources • {d.format} •{" "}
                   {new Date(d.generatedAt).toLocaleTimeString()}
                 </span>
+                <CopySourceButton content={d.content} />
                 <button
-                  className="btn-sm"
-                  onClick={() => navigator.clipboard.writeText(d.content)}
+                  className="btn-sm btn-danger"
+                  onClick={() => setDiagrams((prev) => prev.filter((_, idx) => idx !== i))}
                 >
-                  📋 Copy Source
+                  🗑 Remove
                 </button>
               </div>
-              {d.format === "mermaid" ? (
+              {d.resourceCount === 0 ? (
+                <p className="empty-state">
+                  No resources match this scope/filter — add an infrastructure account and sync
+                  resources first, or broaden the scope above.
+                </p>
+              ) : d.format === "mermaid" ? (
                 <div className="mermaid-container">
                   <MermaidDiagram content={d.content} />
                 </div>
@@ -358,31 +417,91 @@ export default function InfraMap() {
               No infrastructure accounts configured. Add one to start discovering resources.
             </p>
           ) : (
-            accounts.map((acc) => (
-              <div key={acc.id} className="account-card">
-                <div className="account-info">
-                  <span className="account-icon">{providerIcon(acc.provider)}</span>
-                  <div>
-                    <strong>{acc.name}</strong>
-                    <div className="account-meta">
-                      {acc.provider} • {acc.accountId} • {acc.accessMode}
-                      {acc.regions.length > 0 && ` • ${acc.regions.join(", ")}`}
-                    </div>
-                    {acc.lastSyncAt && (
-                      <div className="account-sync">
-                        Last sync: {new Date(acc.lastSyncAt).toLocaleString()}
-                      </div>
-                    )}
+            accounts.map((acc) =>
+              editingAccountId === acc.id ? (
+                <div key={acc.id} className="add-account-form edit-account-form">
+                  <input
+                    placeholder="Account Name (e.g., Production AWS)"
+                    value={editAccount.name}
+                    onChange={(e) => setEditAccount({ ...editAccount, name: e.target.value })}
+                  />
+                  <select
+                    value={editAccount.provider}
+                    onChange={(e) => setEditAccount({ ...editAccount, provider: e.target.value })}
+                  >
+                    <option value="aws">AWS</option>
+                    <option value="azure">Azure</option>
+                    <option value="gcp">GCP</option>
+                    <option value="vmware">VMware</option>
+                    <option value="proxmox">Proxmox</option>
+                    <option value="on-prem">On-Premise</option>
+                  </select>
+                  <input
+                    placeholder="Account/Subscription ID"
+                    value={editAccount.accountId}
+                    onChange={(e) => setEditAccount({ ...editAccount, accountId: e.target.value })}
+                  />
+                  <input
+                    placeholder="Regions (comma-separated, e.g., us-east-1,eu-west-1)"
+                    value={editAccount.regions}
+                    onChange={(e) => setEditAccount({ ...editAccount, regions: e.target.value })}
+                  />
+                  <select
+                    value={editAccount.accessMode}
+                    onChange={(e) => setEditAccount({ ...editAccount, accessMode: e.target.value })}
+                  >
+                    <option value="agent">Agent-based discovery</option>
+                    <option value="api">Direct API access</option>
+                  </select>
+                  {editAccount.accessMode === "agent" && (
+                    <input
+                      placeholder="Agent IDs (comma-separated)"
+                      value={editAccount.agentIds}
+                      onChange={(e) => setEditAccount({ ...editAccount, agentIds: e.target.value })}
+                    />
+                  )}
+                  <label className="edit-enabled-toggle">
+                    <input
+                      type="checkbox"
+                      checked={editAccount.enabled}
+                      onChange={(e) => setEditAccount({ ...editAccount, enabled: e.target.checked })}
+                    />
+                    Enabled
+                  </label>
+                  <div className="form-actions">
+                    <button className="btn-primary" onClick={saveEdit}>Save</button>
+                    <button className="btn-secondary" onClick={() => setEditingAccountId(null)}>Cancel</button>
                   </div>
                 </div>
-                <div className="account-actions">
-                  <span className={`status-dot ${acc.enabled ? "active" : "inactive"}`} />
-                  <button className="btn-sm btn-danger" onClick={() => deleteAccount(acc.id)}>
-                    Delete
-                  </button>
+              ) : (
+                <div key={acc.id} className="account-card">
+                  <div className="account-info">
+                    <span className="account-icon">{providerIcon(acc.provider)}</span>
+                    <div>
+                      <strong>{acc.name}</strong>
+                      <div className="account-meta">
+                        {acc.provider} • {acc.accountId} • {acc.accessMode}
+                        {acc.regions.length > 0 && ` • ${acc.regions.join(", ")}`}
+                      </div>
+                      {acc.lastSyncAt && (
+                        <div className="account-sync">
+                          Last sync: {new Date(acc.lastSyncAt).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="account-actions">
+                    <span className={`status-dot ${acc.enabled ? "active" : "inactive"}`} />
+                    <button className="btn-sm" onClick={() => startEdit(acc)}>
+                      Edit
+                    </button>
+                    <button className="btn-sm btn-danger" onClick={() => deleteAccount(acc.id)}>
+                      Delete
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))
+              )
+            )
           )}
         </div>
       </div>
@@ -390,37 +509,27 @@ export default function InfraMap() {
   );
 }
 
-// Simple Mermaid renderer using the mermaid CDN
+// Renders Mermaid source using the bundled `mermaid` package (no CDN/network
+// dependency, so it works offline and isn't subject to CSP/script-injection
+// races when multiple diagrams render at once).
 function MermaidDiagram({ content }: { content: string }) {
   const [svg, setSvg] = useState<string>("");
   const [renderError, setRenderError] = useState("");
 
   useEffect(() => {
-    const renderMermaid = async () => {
-      try {
-        // Dynamically load mermaid if not already loaded
-        if (!(window as unknown as { mermaid: unknown }).mermaid) {
-          const script = document.createElement("script");
-          script.src = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js";
-          script.onload = () => {
-            const mermaid = (window as unknown as { mermaid: { initialize: (opts: object) => void; render: (id: string, def: string) => Promise<{ svg: string }> } }).mermaid;
-            mermaid.initialize({ startOnLoad: false, theme: "dark" });
-            mermaid
-              .render("mermaid-" + Date.now(), content)
-              .then(({ svg }) => setSvg(svg))
-              .catch((err: Error) => setRenderError(err.message));
-          };
-          document.head.appendChild(script);
-        } else {
-          const mermaid = (window as unknown as { mermaid: { render: (id: string, def: string) => Promise<{ svg: string }> } }).mermaid;
-          const { svg } = await mermaid.render("mermaid-" + Date.now(), content);
-          setSvg(svg);
-        }
-      } catch (err) {
-        setRenderError((err as Error).message);
-      }
+    let cancelled = false;
+    ensureMermaidInitialized();
+    mermaid
+      .render("mermaid-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8), content)
+      .then(({ svg }) => {
+        if (!cancelled) setSvg(svg);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setRenderError(err.message);
+      });
+    return () => {
+      cancelled = true;
     };
-    renderMermaid();
   }, [content]);
 
   if (renderError) {
@@ -432,9 +541,51 @@ function MermaidDiagram({ content }: { content: string }) {
     );
   }
 
-  if (!svg) return <pre className="diagram-source">{content}</pre>;
+  if (!svg) return <p className="empty-state">Rendering…</p>;
 
   return <div dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+// Copy-to-clipboard with visible success/failure feedback and a fallback for
+// environments where navigator.clipboard is unavailable or denied (e.g. an
+// embedded webview without clipboard-write permission) — the old handler
+// called writeText() with no .catch() at all, so a rejected promise failed
+// completely silently and looked indistinguishable from "nothing to copy".
+function CopySourceButton({ content }: { content: string }) {
+  const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
+
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content);
+      } else {
+        throw new Error("Clipboard API unavailable");
+      }
+      setStatus("copied");
+    } catch {
+      // Fallback: select-and-copy via a hidden textarea
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = content;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        setStatus("copied");
+      } catch {
+        setStatus("failed");
+      }
+    }
+    setTimeout(() => setStatus("idle"), 2000);
+  };
+
+  return (
+    <button className="btn-sm" onClick={copy}>
+      {status === "copied" ? "✅ Copied" : status === "failed" ? "❌ Copy failed" : "📋 Copy Source"}
+    </button>
+  );
 }
 
 function providerIcon(provider: string): string {

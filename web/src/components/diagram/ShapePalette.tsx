@@ -5,7 +5,7 @@
  * Author: Yogesh Tiwari
  */
 
-import { useState, type DragEvent, useMemo } from "react";
+import { useEffect, useState, type ChangeEvent, type DragEvent, useMemo } from "react";
 
 export interface ShapeDefinition {
   id: string;
@@ -15,6 +15,27 @@ export interface ShapeDefinition {
   resourceType: string;
   color?: string;
   isGroup?: boolean;
+  // A user-uploaded SVG/PNG data URI, rendered instead of `icon`/CloudIcon's
+  // provider lookup when present (see InfraNode.tsx). Custom shapes are
+  // deliberately kept in localStorage rather than persisted server-side —
+  // a personal shape library, not shared team infrastructure, so no
+  // control-plane/schema change needed for this one.
+  customImage?: string;
+}
+
+const CUSTOM_SHAPES_STORAGE_KEY = "remotely_custom_shapes";
+
+function loadCustomShapes(): ShapeDefinition[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_SHAPES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomShapes(shapes: ShapeDefinition[]) {
+  localStorage.setItem(CUSTOM_SHAPES_STORAGE_KEY, JSON.stringify(shapes));
 }
 
 interface ShapeCategory {
@@ -132,16 +153,63 @@ const SHAPE_CATEGORIES: ShapeCategory[] = [
 export function ShapePalette() {
   const [expandedCategory, setExpandedCategory] = useState<string>("AWS");
   const [search, setSearch] = useState("");
+  const [customShapes, setCustomShapes] = useState<ShapeDefinition[]>(() => loadCustomShapes());
+  const [uploadLabel, setUploadLabel] = useState("");
+  const [uploadError, setUploadError] = useState("");
+
+  useEffect(() => {
+    saveCustomShapes(customShapes);
+  }, [customShapes]);
 
   const onDragStart = (event: DragEvent, shape: ShapeDefinition) => {
     event.dataTransfer.setData("application/reactflow", JSON.stringify(shape));
     event.dataTransfer.effectAllowed = "move";
   };
 
+  const onUploadFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!/^image\/(svg\+xml|png|jpeg)$/.test(file.type)) {
+      setUploadError("Only SVG, PNG, or JPEG images are supported.");
+      return;
+    }
+    if (file.size > 500_000) {
+      setUploadError("Image too large — keep custom shapes under 500KB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const shape: ShapeDefinition = {
+        id: `custom-${Date.now()}`,
+        label: uploadLabel.trim() || file.name.replace(/\.[a-z]+$/i, ""),
+        icon: "🖼️",
+        provider: "custom",
+        resourceType: "other",
+        color: "#8a94a8",
+        customImage: reader.result as string,
+      };
+      setCustomShapes((prev) => [...prev, shape]);
+      setUploadLabel("");
+      setUploadError("");
+    };
+    reader.onerror = () => setUploadError("Couldn't read that file.");
+    reader.readAsDataURL(file);
+  };
+
+  const deleteCustomShape = (id: string) => {
+    setCustomShapes((prev) => prev.filter((s) => s.id !== id));
+  };
+
+  const allCategories = useMemo(
+    () => (customShapes.length > 0 ? [...SHAPE_CATEGORIES, { name: "Custom", icon: "🖼️", shapes: customShapes }] : SHAPE_CATEGORIES),
+    [customShapes]
+  );
+
   const filteredCategories = useMemo(() => {
-    if (!search) return SHAPE_CATEGORIES;
+    if (!search) return allCategories;
     const q = search.toLowerCase();
-    return SHAPE_CATEGORIES.map((cat) => ({
+    return allCategories.map((cat) => ({
       ...cat,
       shapes: cat.shapes.filter(
         (s) =>
@@ -150,7 +218,7 @@ export function ShapePalette() {
           s.provider.toLowerCase().includes(q)
       ),
     })).filter((cat) => cat.shapes.length > 0);
-  }, [search]);
+  }, [search, allCategories]);
 
   return (
     <div className="shape-palette">
@@ -188,15 +256,46 @@ export function ShapePalette() {
                     onDragStart={(e) => onDragStart(e, shape)}
                     title={shape.label}
                   >
-                    <span className="shape-icon">{shape.icon}</span>
+                    {shape.customImage ? (
+                      <img className="shape-icon shape-icon-custom" src={shape.customImage} alt="" />
+                    ) : (
+                      <span className="shape-icon">{shape.icon}</span>
+                    )}
                     <span className="shape-label">{shape.label}</span>
                     {shape.isGroup && <span className="shape-badge">group</span>}
+                    {shape.provider === "custom" && (
+                      <button
+                        className="shape-delete"
+                        title="Remove custom shape"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteCustomShape(shape.id);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
         ))}
+      </div>
+
+      <div className="palette-upload">
+        <p className="palette-upload-label">Custom shape</p>
+        {uploadError && <p className="palette-upload-error">{uploadError}</p>}
+        <input
+          type="text"
+          placeholder="Label (optional)"
+          value={uploadLabel}
+          onChange={(e) => setUploadLabel(e.target.value)}
+        />
+        <label className="palette-upload-btn">
+          🖼️ Upload SVG/PNG
+          <input type="file" accept="image/svg+xml,image/png,image/jpeg" onChange={onUploadFile} hidden />
+        </label>
       </div>
     </div>
   );

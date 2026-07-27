@@ -90,6 +90,46 @@ export function removeSpectator(sessionId: string, ws: WebSocket) {
   if (set.size === 0) sessionSpectators.delete(sessionId);
 }
 
+// Diagram Editor presence + "someone else just saved this" notifications —
+// deliberately NOT live multi-cursor co-editing (that needs real conflict
+// resolution, an operational-transform or CRDT layer over nodes/edges,
+// which is a different order of complexity than everything else in this
+// file). What this gives you: see who else has the same diagram open, and
+// get told to reload — rather than silently fighting over unmerged saves —
+// when someone else's save would otherwise clobber yours.
+export const diagramViewers = new Map<string, Map<WebSocket, string>>();
+
+export function addDiagramViewer(diagramId: string, ws: WebSocket, username: string) {
+  let byWs = diagramViewers.get(diagramId);
+  if (!byWs) {
+    byWs = new Map();
+    diagramViewers.set(diagramId, byWs);
+  }
+  byWs.set(ws, username);
+}
+
+export function removeDiagramViewer(diagramId: string, ws: WebSocket) {
+  const byWs = diagramViewers.get(diagramId);
+  if (!byWs) return;
+  byWs.delete(ws);
+  if (byWs.size === 0) diagramViewers.delete(diagramId);
+}
+
+export function listDiagramViewerNames(diagramId: string): string[] {
+  const byWs = diagramViewers.get(diagramId);
+  return byWs ? Array.from(byWs.values()) : [];
+}
+
+export function broadcastToDiagramViewers(diagramId: string, data: unknown, exclude?: WebSocket) {
+  const byWs = diagramViewers.get(diagramId);
+  if (!byWs) return;
+  const payload = JSON.stringify(data);
+  for (const ws of byWs.keys()) {
+    if (ws === exclude) continue;
+    if (ws.readyState === ws.OPEN) ws.send(payload);
+  }
+}
+
 export function broadcastToSpectators(sessionId: string, data: Buffer | string) {
   const set = sessionSpectators.get(sessionId);
   if (!set || set.size === 0) return;

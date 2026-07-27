@@ -10,7 +10,9 @@ export default defineConfig({
       '/rdp-session': { target: 'ws://localhost:4000', ws: true },
       '/ssh-direct-session': { target: 'ws://localhost:4000', ws: true },
       '/db-session': { target: 'ws://localhost:4000', ws: true },
+      '/k8s-session': { target: 'ws://localhost:4000', ws: true },
       '/watch-session': { target: 'ws://localhost:4000', ws: true },
+      '/diagram-collab': { target: 'ws://localhost:4000', ws: true },
     },
   },
 })

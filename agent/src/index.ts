@@ -6,6 +6,7 @@ import path from "node:path";
 import { loadOrCreateIdentity, markConfirmed, markUnconfirmed, signChallenge } from "./identity.js";
 import { maybeSelfUpdate } from "./selfUpdate.js";
 import { runCollection, type InfraCollectorConfig } from "./infraCollector.js";
+import { resolveUser, canImpersonate, currentOsUsername } from "./impersonate.js";
 
 // DEMO ONLY: config via env vars set per-instance instead of a real
 // enrollment flow (join tokens, IAM-based joining, etc — see the Teleport
@@ -160,19 +161,61 @@ function connect() {
 
       case "open": {
         const { sessionId, login } = msg;
-        console.log(`[${AGENT_ID}] opening session ${sessionId} (login=${login})`);
-        const term = pty.spawn(SHELL, [], {
+        const ownUser = currentOsUsername();
+
+        // Real impersonation: node-pty's spawn() accepts uid/gid directly
+        // (see impersonate.ts for why that's possible and what it
+        // requires). Falls back to running as the agent's own user when
+        // impersonation genuinely can't be honored (not root, or the
+        // requested login has no matching OS user) — same behavior this
+        // POC always had — but now that fallback is loud (agent console +
+        // a real audit trail entry via the "session-info" message below)
+        // instead of silent. A deployment that actually needs enforced
+        // impersonation runs the agent as root with real target users, at
+        // which point this genuinely impersonates instead of falling back.
+        let ptyShell = SHELL;
+        let ptyOpts: Parameters<typeof pty.spawn>[2] = {
           name: "xterm-256color",
           cols: 80,
           rows: 24,
           cwd: os.homedir(),
-          // NOTE: "login" is not actually enforced as a distinct OS user in
-          // this POC — every session runs as whichever user the agent
-          // process itself runs as. A real deployment maps roles to
-          // specific OS logins (Teleport's `logins` role field) and uses
-          // certs/su/sudo to actually assume that user.
           env: { ...process.env, TERM: "xterm-256color" } as { [key: string]: string },
-        });
+        };
+        let impersonated = false;
+        let fallbackReason = "";
+
+        if (login && login !== ownUser) {
+          if (!canImpersonate()) {
+            fallbackReason = `agent process isn't running as root, so it can't assume a different OS user`;
+          } else {
+            const target = resolveUser(login);
+            if (!target) {
+              fallbackReason = `no OS user named "${login}" found on this host`;
+            } else {
+              ptyShell = target.shell;
+              ptyOpts = {
+                name: "xterm-256color",
+                cols: 80,
+                rows: 24,
+                cwd: target.home,
+                uid: target.uid,
+                gid: target.gid,
+                env: { ...process.env, TERM: "xterm-256color", HOME: target.home, USER: login, LOGNAME: login } as { [key: string]: string },
+              };
+              impersonated = true;
+            }
+          }
+        }
+
+        if (fallbackReason) {
+          console.warn(`[${AGENT_ID}] session ${sessionId}: requested login "${login}" but ${fallbackReason} — running as "${ownUser}" instead`);
+        }
+        console.log(`[${AGENT_ID}] opening session ${sessionId} (login=${login}, impersonated=${impersonated})`);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "session-info", sessionId, impersonated, actualUser: impersonated ? login : ownUser, fallbackReason }));
+        }
+
+        const term = pty.spawn(ptyShell, [], ptyOpts);
         ptys.set(sessionId, term);
 
         term.onData((chunk) => {

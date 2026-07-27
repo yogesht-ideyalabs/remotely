@@ -348,7 +348,7 @@ function generateMermaidArchitecture(resources: InfraResource[], options: Diagra
         const nodeId = sanitizeId(r.externalId);
         const icon = getMermaidIcon(r.type);
         const label = r.name || r.externalId;
-        lines.push(`    ${nodeId}${icon}["${label}"]`);
+        lines.push(`    ${nodeId}["${icon ? icon + " " : ""}${label}"]`);
       }
     }
 
@@ -404,7 +404,7 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
       for (const r of inSubnet) {
         const nodeId = sanitizeId(r.externalId);
         const nodeIcon = getMermaidIcon(r.type);
-        lines.push(`      ${nodeId}${nodeIcon}["${r.name || r.externalId}"]`);
+        lines.push(`      ${nodeId}["${nodeIcon ? nodeIcon + " " : ""}${r.name || r.externalId}"]`);
       }
 
       lines.push("    end");
@@ -436,7 +436,7 @@ function generateMermaidNetwork(resources: InfraResource[], options: DiagramOpti
     for (const r of noVpc) {
       const nodeId = sanitizeId(r.externalId);
       const icon = getMermaidIcon(r.type);
-      lines.push(`    ${nodeId}${icon}["${r.name || r.externalId}"]`);
+      lines.push(`    ${nodeId}["${icon ? icon + " " : ""}${r.name || r.externalId}"]`);
     }
     lines.push("  end");
   }
@@ -597,6 +597,11 @@ function groupResources(
   return groups;
 }
 
+// Returns just the icon character (or "" if this type has none) — callers
+// combine it into their own single ["label"] bracket group. Returning a
+// pre-wrapped `["🌐"]` here (as this used to) meant every call site ended
+// up emitting two adjacent bracket groups on one node reference, e.g.
+// `vpc-abc123["🌐"]["main-vpc"]`, which isn't valid Mermaid node syntax.
 function getMermaidIcon(type: InfraResourceType): string {
   const icons: Record<string, string> = {
     "vm": "🖥️",
@@ -616,7 +621,7 @@ function getMermaidIcon(type: InfraResourceType): string {
     "queue": "📬",
     "cdn": "🌍",
   };
-  return icons[type] ? `["${icons[type]}"]` : "";
+  return icons[type] ?? "";
 }
 
 function getD2Shape(type: InfraResourceType): string {

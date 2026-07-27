@@ -58,8 +58,17 @@ export class SignatureV4 {
     }
     signedHeadersList.sort();
 
+    // Header names are looked up lowercase below (AWS's canonical-header
+    // format requires lowercase names), but callers naturally write them
+    // capitalized (e.g. "Content-Type") — normalize here or the lookup
+    // misses, signs an empty string for that header, and every request
+    // gets rejected with SignatureDoesNotMatch since AWS computes the
+    // canonical request from the header value that's actually on the wire.
+    const lowerHeaders: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) lowerHeaders[k.toLowerCase()] = v;
+
     const allHeaders: Record<string, string> = {
-      ...headers,
+      ...lowerHeaders,
       host,
       "x-amz-date": amzDate,
     };

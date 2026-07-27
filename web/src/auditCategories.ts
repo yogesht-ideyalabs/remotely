@@ -43,7 +43,15 @@ export const AUDIT_CATEGORIES: AuditCategory[] = [
   {
     id: "sessions",
     label: "Sessions",
-    eventTypes: ["session_start", "session_end", "session_error", "session_ttl_expired", "session_terminated_by_admin", "session_watched"],
+    eventTypes: [
+      "session_start",
+      "session_end",
+      "session_error",
+      "session_ttl_expired",
+      "session_terminated_by_admin",
+      "session_watched",
+      "session_login_status",
+    ],
   },
   {
     id: "files",

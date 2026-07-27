@@ -7,6 +7,8 @@ import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { Client as SSHClient } from "ssh2";
 import { Client as PgClient } from "pg";
+import { KubeConfig, Exec } from "@kubernetes/client-node";
+import { Writable, PassThrough } from "node:stream";
 import {
   findUser,
   logAudit,
@@ -45,11 +47,15 @@ import {
   type AuditEvent,
 } from "./store.js";
 import { signToken, verifyToken, signMfaPendingToken, verifyMfaPendingToken, signDownloadToken, verifyDownloadToken } from "./auth.js";
-import { requireAuth, type AuthedRequest } from "./auth.js";
+import { requireAuth, requireAdmin, requireAnyAdmin, type AuthedRequest } from "./auth.js";
 import { generateBase32Secret, verifyTotp, otpauthUrl } from "./totp.js";
 import { generateEphemeralKeyPair, issueGrant, checkGrant } from "./sshJit.js";
 import { buildAuthorizationUrl, completeLogin } from "./oidc.js";
 import { deliverToSiem, initSiemExport } from "./siemExport.js";
+import { getComplianceReport } from "./compliance.js";
+import { deliverToPlugin, initPluginSystem } from "./pluginSystem.js";
+import { listWebhookPlugins, getWebhookPlugin, createWebhookPlugin, updateWebhookPlugin, deleteWebhookPlugin } from "./store.js";
+import { getNotificationClearedAt, clearNotificationsFor } from "./store.js";
 import {
   getRegistrationOptions,
   verifyRegistration,
@@ -104,6 +110,10 @@ import {
   spectatorCount,
   sendAgentFileRequest,
   resolveAgentFileRequest,
+  addDiagramViewer,
+  removeDiagramViewer,
+  listDiagramViewerNames,
+  broadcastToDiagramViewers,
   type SessionInfo,
 } from "./state.js";
 import { connectToGuacd } from "./guac.js";
@@ -388,24 +398,6 @@ app.post("/api/profile/mfa/disable", requireAuth, (req: AuthedRequest, res) => {
   res.status(204).end();
 });
 
-function requireAdmin(req: AuthedRequest, res: express.Response, next: express.NextFunction) {
-  if (!req.user!.roles.includes("admin")) {
-    res.status(403).json({ error: "admin only" });
-    return;
-  }
-  next();
-}
-
-// Full admin OR a delegated/tenant admin (non-empty manageLabels on some
-// role). Route handlers below do the finer per-entity scoping themselves.
-function requireAnyAdmin(req: AuthedRequest, res: express.Response, next: express.NextFunction) {
-  const roles = resolveRoles(req.user!.roles);
-  if (!isAnyAdmin(roles)) {
-    res.status(403).json({ error: "admin only" });
-    return;
-  }
-  next();
-}
 
 // ---------- REST API: resources ----------
 
@@ -724,6 +716,10 @@ function connectionFromBody(id: string, body: Record<string, unknown>, createdBy
     createdBy,
     sshKeyId: body.sshKeyId ? String(body.sshKeyId) : undefined,
     sshJitEnabled: Boolean(body.sshJitEnabled),
+    kubeconfig: body.kubeconfig ? String(body.kubeconfig) : undefined,
+    k8sNamespace: body.k8sNamespace ? String(body.k8sNamespace) : undefined,
+    k8sPodName: body.k8sPodName ? String(body.k8sPodName) : undefined,
+    k8sContainerName: body.k8sContainerName ? String(body.k8sContainerName) : undefined,
   };
 }
 
@@ -1502,6 +1498,15 @@ app.get("/api/admin/dashboard", requireAuth, requireAnyAdmin, (req: AuthedReques
   });
 });
 
+// ---------- Compliance report ----------
+// Full-admin only, deliberately not requireAnyAdmin — a delegated admin's
+// tenant-scoped view wouldn't produce a meaningful platform-wide posture
+// report (e.g. "MFA adoption among privileged accounts" needs to see every
+// account, not just their own tenant's).
+app.get("/api/admin/compliance", requireAuth, requireAdmin, (_req, res) => {
+  res.json(getComplianceReport());
+});
+
 // ---------- SIEM export (real-time signed webhook forwarding of the audit log) ----------
 // Full-admin only, deliberately not requireAnyAdmin — this controls where
 // the ENTIRE audit stream (every tenant's events) gets forwarded, not a
@@ -1572,17 +1577,171 @@ app.post("/api/admin/siem-config/test", requireAuth, requireAdmin, async (req: A
   res.json(result);
 });
 
+// ---------- Webhook plugins ----------
+// Full-admin only — same reasoning as SIEM export: a plugin can fire on
+// event types spanning every tenant, so this isn't a per-tenant delegated
+// admin capability.
+
+function redactPlugin(plugin: import("./store.js").WebhookPlugin) {
+  return {
+    id: plugin.id,
+    name: plugin.name,
+    enabled: plugin.enabled,
+    eventTypes: plugin.eventTypes,
+    webhookUrl: plugin.webhookUrl,
+    secretSet: plugin.secret.length > 0,
+    secretPreview: plugin.secret ? `••••${plugin.secret.slice(-4)}` : "",
+    createdAt: plugin.createdAt,
+    createdBy: plugin.createdBy,
+    updatedAt: plugin.updatedAt,
+  };
+}
+
+app.get("/api/admin/plugins", requireAuth, requireAdmin, (_req, res) => {
+  res.json(listWebhookPlugins().map(redactPlugin));
+});
+
+app.post("/api/admin/plugins", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const { name, enabled, eventTypes, webhookUrl, secret } = (req.body ?? {}) as {
+    name?: string;
+    enabled?: boolean;
+    eventTypes?: string[];
+    webhookUrl?: string;
+    secret?: string;
+  };
+  const url = String(webhookUrl ?? "").trim();
+  if (!name || !url) {
+    res.status(400).json({ error: "name and webhookUrl are required" });
+    return;
+  }
+  try {
+    new URL(url);
+  } catch {
+    res.status(400).json({ error: "invalid webhookUrl" });
+    return;
+  }
+  if (enabled && !secret) {
+    res.status(400).json({ error: "secret required to enable a plugin (used to sign delivered events)" });
+    return;
+  }
+  const plugin = createWebhookPlugin({
+    name,
+    enabled: Boolean(enabled),
+    eventTypes: Array.isArray(eventTypes) ? eventTypes : [],
+    webhookUrl: url,
+    secret: secret ?? "",
+    createdBy: req.user!.sub,
+  });
+  logAudit(req.user!.sub, "plugin_created", plugin.id, `name=${plugin.name} eventTypes=${plugin.eventTypes.join(",") || "(all)"}`);
+  res.status(201).json(redactPlugin(plugin));
+});
+
+app.patch("/api/admin/plugins/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const existing = getWebhookPlugin(req.params.id);
+  if (!existing) {
+    res.status(404).json({ error: "plugin not found" });
+    return;
+  }
+  const { name, enabled, eventTypes, webhookUrl, secret } = (req.body ?? {}) as {
+    name?: string;
+    enabled?: boolean;
+    eventTypes?: string[];
+    webhookUrl?: string;
+    secret?: string;
+  };
+  if (webhookUrl !== undefined) {
+    try {
+      new URL(webhookUrl);
+    } catch {
+      res.status(400).json({ error: "invalid webhookUrl" });
+      return;
+    }
+  }
+  const resolvedSecret = typeof secret === "string" && secret.length > 0 ? secret : existing.secret;
+  const resolvedEnabled = enabled !== undefined ? Boolean(enabled) : existing.enabled;
+  if (resolvedEnabled && !resolvedSecret) {
+    res.status(400).json({ error: "secret required to enable a plugin (used to sign delivered events)" });
+    return;
+  }
+  const updated = updateWebhookPlugin(req.params.id, {
+    ...(name !== undefined ? { name } : {}),
+    ...(webhookUrl !== undefined ? { webhookUrl } : {}),
+    eventTypes: Array.isArray(eventTypes) ? eventTypes : existing.eventTypes,
+    secret: resolvedSecret,
+    enabled: resolvedEnabled,
+  })!;
+  logAudit(req.user!.sub, "plugin_updated", updated.id, `name=${updated.name} enabled=${updated.enabled}`);
+  res.json(redactPlugin(updated));
+});
+
+app.delete("/api/admin/plugins/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const plugin = getWebhookPlugin(req.params.id);
+  if (!deleteWebhookPlugin(req.params.id)) {
+    res.status(404).json({ error: "plugin not found" });
+    return;
+  }
+  logAudit(req.user!.sub, "plugin_deleted", req.params.id, `name=${plugin?.name}`);
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/plugins/:id/test", requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const plugin = getWebhookPlugin(req.params.id);
+  if (!plugin) {
+    res.status(404).json({ error: "plugin not found" });
+    return;
+  }
+  const testEvent: AuditEvent = {
+    id: crypto.randomUUID(),
+    ts: Date.now(),
+    username: req.user!.sub,
+    eventType: "plugin_test",
+    resourceId: null,
+    details: `manual test delivery for plugin ${plugin.name}`,
+  };
+  const result = await deliverToPlugin(plugin, testEvent);
+  logAudit(req.user!.sub, "plugin_test_sent", plugin.id, result.ok ? `delivered, HTTP ${result.status}` : `failed: ${result.error}`);
+  res.json(result);
+});
+
 // Lightweight feed for the notification bell. Admins (full or delegated)
 // get the same tenant-scoped view /api/audit and the Dashboard use, so a
 // delegated admin sees access-denied/new-connection events for their own
 // tenant, not just their own actions. A plain user (no admin role at all)
 // has no "tenant" to scope by, so they fall back to their own events only.
-app.get("/api/notifications", requireAuth, (req: AuthedRequest, res) => {
+const NOTIFICATION_EVENT_TYPES = new Set(["access_denied", "session_ttl_expired", "session_error", "connection_created", "user_created"]);
+
+function scopedNotifications(req: AuthedRequest, limitEvents: number): AuditEvent[] {
   const roles = resolveRoles(req.user!.roles);
-  const interesting = new Set(["access_denied", "session_ttl_expired", "session_error", "connection_created", "user_created"]);
-  const events = readAudit(300).filter((e) => interesting.has(e.eventType));
-  const scoped = isAnyAdmin(roles) ? events.filter(auditEventInScope(roles)) : events.filter((e) => e.username === req.user!.sub);
-  res.json(scoped.slice(0, 20));
+  const events = readAudit(limitEvents).filter((e) => NOTIFICATION_EVENT_TYPES.has(e.eventType));
+  return isAnyAdmin(roles) ? events.filter(auditEventInScope(roles)) : events.filter((e) => e.username === req.user!.sub);
+}
+
+// Dropdown feed: only what's new since the user last cleared it, capped to
+// 10 — a quick glance, not the record. See /api/notifications/history for
+// the full picture.
+app.get("/api/notifications", requireAuth, (req: AuthedRequest, res) => {
+  const clearedAt = getNotificationClearedAt(req.user!.sub);
+  const scoped = scopedNotifications(req, 300).filter((e) => e.ts > clearedAt);
+  res.json(scoped.slice(0, 10));
+});
+
+// Clearing only resets the dropdown's watermark — it does NOT delete or
+// hide anything from /api/notifications/history, which stays a real
+// history the same way the audit log itself is never edited or deleted.
+app.post("/api/notifications/clear", requireAuth, (req: AuthedRequest, res) => {
+  const clearedAt = clearNotificationsFor(req.user!.sub);
+  res.json({ clearedAt });
+});
+
+// Full history, independent of the dropdown's cleared watermark — up to
+// `days` back (default/max 30, matching what was asked for). Same scoping
+// as the dropdown, just a longer window and no cap.
+app.get("/api/notifications/history", requireAuth, (req: AuthedRequest, res) => {
+  const days = Math.min(Number(req.query.days) || 30, 30);
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const clearedAt = getNotificationClearedAt(req.user!.sub);
+  const scoped = scopedNotifications(req, 100_000).filter((e) => e.ts > cutoff);
+  res.json({ clearedAt, events: scoped });
 });
 
 // Recordings are just files named by sessionId — cross-reference the audit
@@ -1752,6 +1911,36 @@ agentWss.on("connection", (socket, req) => {
           if (session.browserSocket.readyState === WebSocket.OPEN) session.browserSocket.close();
           logAudit(session.username, "session_end", session.agentId, `resource=${session.resourceHostname} sessionId=${msg.sessionId}`);
           sessions.delete(msg.sessionId);
+        }
+      } else if (msg.type === "error") {
+        // The agent accepted the "open" request but couldn't actually
+        // start the session at all (PTY spawn failed). Surface the real
+        // reason instead of leaving the browser hanging on a session that
+        // will never produce output.
+        const session = sessions.get(msg.sessionId);
+        if (session) {
+          if (session.ttlTimer) clearTimeout(session.ttlTimer);
+          session.recordingStream.end();
+          logAudit(session.username, "session_error", session.agentId, `sessionId=${msg.sessionId}: ${msg.message}`);
+          if (session.browserSocket.readyState === WebSocket.OPEN) session.browserSocket.close(1011, String(msg.message ?? "session failed").slice(0, 120));
+          sessions.delete(msg.sessionId);
+        }
+      } else if (msg.type === "session-info") {
+        // Whether the agent actually impersonated the requested OS login
+        // (real uid/gid switch) or fell back to running as its own user —
+        // see agent/src/impersonate.ts. Logged as its own audit event
+        // (not folded into session_start's details, which is already
+        // written before the agent replies) so "was this session actually
+        // running as who it claims" is a real, searchable, honest fact
+        // instead of an assumption.
+        const session = sessions.get(msg.sessionId);
+        if (session) {
+          logAudit(
+            session.username,
+            "session_login_status",
+            session.agentId,
+            `sessionId=${msg.sessionId} requestedLogin=${session.login} actualUser=${msg.actualUser} impersonated=${msg.impersonated}${msg.fallbackReason ? ` reason="${msg.fallbackReason}"` : ""}`
+          );
         }
       } else if (msg.type === "ping") {
         const agentInfo = agents.get(id);
@@ -2157,6 +2346,194 @@ sshDirectWss.on("connection", (browserSocket, req) => {
   ssh.connect({ ...connectOpts, tryKeyboard: true, readyTimeout: 10000 });
 });
 
+// ---------- WebSocket: browser sessions (Kubernetes pod exec) ----------
+// Uses the real `pods/exec` subresource over the same SPDY-over-WebSocket
+// protocol `kubectl exec` itself speaks (via @kubernetes/client-node's
+// Exec class) — not a shell-out to a `kubectl` binary. One Connection is
+// one specific pod+container, matching how ssh-direct/rdp/database each
+// target one pre-configured resource, not a general kubectl-proxy that
+// could reach anything the stored credential can see.
+
+// Writable stdout sink that also satisfies @kubernetes/client-node's
+// isResizable() check (needs `rows`/`columns` properties + an EventEmitter
+// `.on()`, which Writable already provides) so a real PTY resize can be
+// forwarded into the exec session's resize channel, not just the initial size.
+class K8sTerminalSink extends Writable {
+  rows = 24;
+  columns = 80;
+  constructor(private onChunk: (chunk: Buffer) => void) {
+    super();
+  }
+  override _write(chunk: Buffer, _enc: string, callback: (error?: Error | null) => void) {
+    this.onChunk(chunk);
+    callback();
+  }
+  resize(rows: number, cols: number) {
+    this.rows = rows;
+    this.columns = cols;
+    this.emit("resize");
+  }
+}
+
+const k8sWss = new WebSocketServer({ noServer: true });
+
+k8sWss.on("connection", async (browserSocket, req) => {
+  const url = new URL(req.url ?? "", "http://internal");
+  const token = url.searchParams.get("token");
+  const resourceId = url.searchParams.get("resourceId");
+  const clientIp = req.socket.remoteAddress ?? "";
+
+  const payload = token ? verifyToken(token) : null;
+  if (!payload || !resourceId) {
+    browserSocket.close(4001, "unauthorized");
+    return;
+  }
+
+  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const auth = authorizeConnectionSession(roles, resourceId, "kubernetes", payload.sub);
+  if (!auth.ok) {
+    logAudit(payload.sub, "access_denied", resourceId, auth.reason);
+    browserSocket.close(4003, auth.reason);
+    return;
+  }
+  if (!ipAllowed(roles, clientIp)) {
+    const ipReason = `source ip ${clientIp} outside role's allowed CIDRs`;
+    logAudit(payload.sub, "access_denied", resourceId, ipReason);
+    browserSocket.close(4003, ipReason);
+    return;
+  }
+  const target = auth.conn;
+
+  if (!target.kubeconfig || !target.k8sNamespace || !target.k8sPodName) {
+    logAudit(payload.sub, "session_error", resourceId, "connection missing kubeconfig/namespace/pod");
+    browserSocket.close(1011, "connection is not fully configured (missing kubeconfig, namespace, or pod)");
+    return;
+  }
+
+  const sessionId = crypto.randomUUID();
+  const recordingStream = startRecording(sessionId);
+  const startedAt = Date.now();
+  const record = (dir: "i" | "o", data: Buffer) => {
+    recordingStream.write(JSON.stringify({ t: Date.now() - startedAt, dir, data: data.toString("base64") }) + "\n");
+  };
+
+  let kubeConfig: KubeConfig;
+  try {
+    kubeConfig = new KubeConfig();
+    kubeConfig.loadFromString(Buffer.from(target.kubeconfig, "base64").toString("utf8"));
+  } catch (err) {
+    logAudit(payload.sub, "session_error", resourceId, `invalid kubeconfig: ${(err as Error).message}`);
+    browserSocket.close(1011, "invalid kubeconfig");
+    return;
+  }
+
+  const stdoutSink = new K8sTerminalSink((chunk) => {
+    record("o", chunk);
+    if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(chunk);
+    broadcastToSpectators(sessionId, chunk);
+  });
+  const stderrSink = new K8sTerminalSink((chunk) => {
+    record("o", chunk);
+    if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(chunk);
+    broadcastToSpectators(sessionId, chunk);
+  });
+  const stdin = new PassThrough();
+
+  let ttlTimer: NodeJS.Timeout | undefined;
+  let execSocket: import("ws").WebSocket | undefined;
+
+  // Both the k8s exec stream ending (statusCallback) and the browser tab
+  // closing (browserSocket "close") independently lead to session teardown
+  // — guard so "session_end" is logged exactly once regardless of which
+  // side triggers it first, instead of double-logging or, worse, never
+  // logging it if the path that used to log it doesn't fire.
+  let sessionEndLogged = false;
+  const logSessionEnd = (extra: string) => {
+    if (sessionEndLogged) return;
+    sessionEndLogged = true;
+    logAudit(payload.sub, "session_end", target.id, `resource=${target.hostname} sessionId=${sessionId} ${extra}`);
+  };
+
+  const terminate = () => {
+    if (ttlTimer) clearTimeout(ttlTimer);
+    stdin.end();
+    execSocket?.close();
+    if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(4008, "session terminated");
+  };
+
+  try {
+    const exec = new Exec(kubeConfig);
+    execSocket = await exec.exec(
+      target.k8sNamespace,
+      target.k8sPodName,
+      target.k8sContainerName || "",
+      ["/bin/sh"],
+      stdoutSink,
+      stderrSink,
+      stdin,
+      true,
+      (status) => logSessionEnd(`status=${status.status ?? "unknown"}`)
+    );
+  } catch (err) {
+    logAudit(payload.sub, "session_error", resourceId, `k8s exec failed: ${(err as Error).message}`);
+    if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(1011, (err as Error).message.slice(0, 120));
+    return;
+  }
+
+  if (browserSocket.readyState !== WebSocket.OPEN) {
+    terminate();
+    return;
+  }
+
+  logAudit(
+    payload.sub,
+    "session_start",
+    target.id,
+    `resource=${target.hostname} type=kubernetes login=${target.k8sNamespace}/${target.k8sPodName} sessionId=${sessionId}`
+  );
+
+  otherSessions.set(sessionId, {
+    id: sessionId,
+    username: payload.sub,
+    resourceId: target.id,
+    resourceHostname: target.hostname,
+    type: "kubernetes",
+    startedAt,
+    terminate,
+  });
+
+  const ttlMinutes = effectiveSessionTTLMinutes(roles);
+  if (ttlMinutes !== null) {
+    ttlTimer = setTimeout(() => {
+      logAudit(payload.sub, "session_ttl_expired", target.id, `sessionId=${sessionId} ttlMinutes=${ttlMinutes}`);
+      terminate();
+    }, ttlMinutes * 60_000);
+  }
+
+  execSocket.on("close", () => {
+    if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close();
+  });
+
+  browserSocket.on("message", (data, isBinary) => {
+    if (isBinary) {
+      record("i", data as Buffer);
+      stdin.write(data as Buffer);
+    } else {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === "resize") stdoutSink.resize(msg.rows, msg.cols);
+    }
+  });
+
+  browserSocket.on("close", () => {
+    if (ttlTimer) clearTimeout(ttlTimer);
+    recordingStream.end();
+    stdin.end();
+    execSocket?.close();
+    otherSessions.delete(sessionId);
+    logSessionEnd("(browser disconnected)");
+  });
+});
+
 // ---------- WebSocket: browser sessions (database query console) ----------
 
 const dbWss = new WebSocketServer({ noServer: true });
@@ -2347,6 +2724,41 @@ watchWss.on("connection", (browserSocket, req) => {
   });
 });
 
+// Diagram Editor presence + save notifications — see the comment on
+// diagramViewers in state.ts for what this deliberately is and isn't
+// (no live co-editing, just "who else is here" + "reload, someone saved").
+const diagramCollabWss = new WebSocketServer({ noServer: true });
+
+diagramCollabWss.on("connection", (ws, req) => {
+  const url = new URL(req.url ?? "", "http://internal");
+  const token = url.searchParams.get("token");
+  const diagramId = url.searchParams.get("diagramId");
+  const payload = token ? verifyToken(token) : null;
+  if (!payload || !diagramId) {
+    ws.close(4001, "unauthorized");
+    return;
+  }
+
+  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  if (!isAnyAdmin(roles)) {
+    ws.close(4003, "admin only");
+    return;
+  }
+
+  addDiagramViewer(diagramId, ws, payload.sub);
+  const presence = { type: "presence", viewers: listDiagramViewerNames(diagramId) };
+  broadcastToDiagramViewers(diagramId, presence);
+
+  // Spectator-style: this channel is presence + notifications only, never
+  // a path for one client's edits to reach another's canvas.
+  ws.on("message", () => {});
+
+  ws.on("close", () => {
+    removeDiagramViewer(diagramId, ws);
+    broadcastToDiagramViewers(diagramId, { type: "presence", viewers: listDiagramViewerNames(diagramId) });
+  });
+});
+
 // ---------- route upgrades to the right WSS by path ----------
 
 server.on("upgrade", (req, socket, head) => {
@@ -2361,14 +2773,19 @@ server.on("upgrade", (req, socket, head) => {
     sshDirectWss.handleUpgrade(req, socket, head, (ws) => sshDirectWss.emit("connection", ws, req));
   } else if (pathname === "/db-session") {
     dbWss.handleUpgrade(req, socket, head, (ws) => dbWss.emit("connection", ws, req));
+  } else if (pathname === "/k8s-session") {
+    k8sWss.handleUpgrade(req, socket, head, (ws) => k8sWss.emit("connection", ws, req));
   } else if (pathname === "/watch-session") {
     watchWss.handleUpgrade(req, socket, head, (ws) => watchWss.emit("connection", ws, req));
+  } else if (pathname === "/diagram-collab") {
+    diagramCollabWss.handleUpgrade(req, socket, head, (ws) => diagramCollabWss.emit("connection", ws, req));
   } else {
     socket.destroy();
   }
 });
 
 initSiemExport();
+initPluginSystem();
 
 // Infrastructure discovery & diagram routes
 import { infraRouter } from "./infraRoutes.js";

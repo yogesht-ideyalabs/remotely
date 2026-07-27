@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-linux-x64/
+dist-windows-x64/
 *.db
 *.db-shm
 *.db-wal

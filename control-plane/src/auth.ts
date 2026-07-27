@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { findUser } from "./store.js";
+import { resolveRoles, isAnyAdmin } from "./rbac.js";
 
 // DEMO ONLY: a fixed secret and long-ish TTL. Real deployments issue
 // short-lived (minutes-hours) certs bound to an SSO identity, not a
@@ -72,6 +73,26 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
     return;
   }
   req.user = { sub: payload.sub, roles: user.roles };
+  next();
+}
+
+export function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
+  if (!req.user!.roles.includes("admin")) {
+    res.status(403).json({ error: "admin only" });
+    return;
+  }
+  next();
+}
+
+// Full admin OR a delegated/tenant admin (non-empty manageLabels on some
+// role). Route handlers do their own finer per-entity scoping on top of
+// this — it's the floor, not the whole check.
+export function requireAnyAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
+  const roles = resolveRoles(req.user!.roles);
+  if (!isAnyAdmin(roles)) {
+    res.status(403).json({ error: "admin only" });
+    return;
+  }
   next();
 }
 

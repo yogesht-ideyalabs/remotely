@@ -6,7 +6,14 @@
  * directly query cloud APIs and discover resources.
  *
  * Currently supported:
- * - AWS (via STS AssumeRole → ec2/rds/elbv2/lambda describe calls)
+ * - AWS (via STS AssumeRole → EC2 instances/VPCs/subnets/security-groups
+ *   (including real inbound/outbound rules and tags), ELBv2 load
+ *   balancers, RDS instances, Lambda functions). Lambda uses its own
+ *   request/parse path (lambdaApiCall/parseLambdaFunctions) since its real
+ *   API is REST/JSON (GET, path-versioned), not the POST+form-urlencoded+
+ *   XML "Query protocol" every other call here uses — SigV4 signing still
+ *   applies the same way, just with an empty-body GET instead of a form-
+ *   encoded POST.
  *
  * Author: Yogesh Tiwari
  */
@@ -129,6 +136,29 @@ async function awsApiCall(
   return response.text();
 }
 
+// Lambda's real API — REST/JSON, GET, path-versioned — not the
+// POST+form-urlencoded+XML "Query protocol" awsApiCall speaks for every
+// other service here. SigV4 signing still applies the same way (empty
+// body is a valid, correctly-hashable payload for a GET request — the
+// signer doesn't need a body to sign, just to hash *something*, and the
+// empty string is that something).
+async function lambdaApiCall(region: string, credentials: AwsCredentials, path: string): Promise<unknown> {
+  const { SignatureV4 } = await import("./awsSigV4.js");
+  const signer = new SignatureV4("lambda", region, credentials);
+
+  const host = `lambda.${region}.amazonaws.com`;
+  const url = `https://${host}${path}`;
+
+  const signedHeaders = await signer.sign("GET", url, { Host: host }, "");
+
+  const response = await fetch(url, { method: "GET", headers: signedHeaders });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`AWS lambda:${path} failed (${response.status}): ${text.slice(0, 200)}`);
+  }
+  return response.json();
+}
+
 function getApiVersion(service: string): string {
   const versions: Record<string, string> = {
     ec2: "2016-11-15",
@@ -235,6 +265,24 @@ async function discoverAwsRegion(
     console.error(`[infra-sync] ELB ${region}:`, (err as Error).message);
   }
 
+  // RDS Instances — was documented in this file's header comment and
+  // listed in getApiVersion's version map, but never actually wired up.
+  try {
+    const xml = await awsApiCall("rds", region, "DescribeDBInstances", credentials);
+    resources.push(...parseRdsInstances(xml, region));
+  } catch (err) {
+    console.error(`[infra-sync] RDS ${region}:`, (err as Error).message);
+  }
+
+  // Lambda functions — the other item this file's header comment used to
+  // overclaim as supported. Real REST/JSON call now, see lambdaApiCall.
+  try {
+    const json = await lambdaApiCall(region, credentials, "/2015-03-31/functions/");
+    resources.push(...parseLambdaFunctions(json, region));
+  } catch (err) {
+    console.error(`[infra-sync] Lambda ${region}:`, (err as Error).message);
+  }
+
   return resources;
 }
 
@@ -246,17 +294,70 @@ function extractXmlValue(xml: string, tag: string): string {
   return match ? match[1].trim() : "";
 }
 
+// Real, verified-not-assumed bug this fixes: a non-greedy `(.*?)` regex
+// isn't nesting-aware, so for any block that contains its own nested same-
+// named tag — which is the normal shape of AWS's XML responses (an EC2
+// instance's <item> contains a <groupSet><item>...</item></groupSet> for
+// its security groups, a security group's <item> contains
+// <ipPermissions><item>...</item></ipPermissions> for its rules, etc.) —
+// the regex matches only up to the FIRST closing tag it finds, which
+// belongs to the inner nested block, silently truncating the outer one
+// and losing every field that came after the nesting started. Confirmed
+// with a realistic AWS-shaped test snippet before shipping this fix, not
+// just by inspection: the old regex returned 1 truncated block missing
+// vpcId/groupDescription for a security group with 2 permission rules;
+// this version correctly returns the full top-level block.
 function extractAllXmlBlocks(xml: string, tag: string): string[] {
-  const regex = new RegExp(`<${tag}>(.*?)</${tag}>`, "gs");
+  const openTag = `<${tag}>`;
+  const closeTag = `</${tag}>`;
   const blocks: string[] = [];
-  let match;
-  while ((match = regex.exec(xml)) !== null) {
-    blocks.push(match[1]);
+  let pos = 0;
+  while (true) {
+    const start = xml.indexOf(openTag, pos);
+    if (start === -1) break;
+    let depth = 1;
+    let cursor = start + openTag.length;
+    while (depth > 0) {
+      const nextOpen = xml.indexOf(openTag, cursor);
+      const nextClose = xml.indexOf(closeTag, cursor);
+      if (nextClose === -1) {
+        cursor = xml.length;
+        depth = 0;
+        break;
+      }
+      if (nextOpen !== -1 && nextOpen < nextClose) {
+        depth++;
+        cursor = nextOpen + openTag.length;
+      } else {
+        depth--;
+        cursor = nextClose + closeTag.length;
+      }
+    }
+    blocks.push(xml.slice(start + openTag.length, cursor - closeTag.length));
+    pos = cursor;
   }
   return blocks;
 }
 
-function parseEc2Instances(xml: string, region: string): Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] {
+// Shared by every EC2-family parser (instances/VPCs/subnets/security
+// groups all use the same <tagSet><item><key/><value/></item></tagSet>
+// shape in the Query API) — real tags, not just a Name lookup. Depends on
+// extractAllXmlBlocks' nesting fix above: tagSet is scoped out first via
+// extractXmlValue (safe — only one <tagSet> per item, no self-nesting), so
+// the <item> blocks extracted from within it are unambiguously tag items,
+// not the resource's other nested item collections (groupSet, etc.).
+export function extractEc2Tags(itemXml: string): Record<string, string> {
+  const tagSetContent = extractXmlValue(itemXml, "tagSet");
+  if (!tagSetContent) return {};
+  const tags: Record<string, string> = {};
+  for (const tagItem of extractAllXmlBlocks(tagSetContent, "item")) {
+    const key = extractXmlValue(tagItem, "key");
+    if (key) tags[key] = extractXmlValue(tagItem, "value");
+  }
+  return tags;
+}
+
+export function parseEc2Instances(xml: string, region: string): Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] {
   const results: Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] = [];
   const items = extractAllXmlBlocks(xml, "item");
 
@@ -270,16 +371,8 @@ function parseEc2Instances(xml: string, region: string): Omit<InfraResource, "id
     const publicIp = extractXmlValue(item, "ipAddress");
     const instanceType = extractXmlValue(item, "instanceType");
     const state = extractXmlValue(item, "name"); // inside <instanceState><name>
-
-    // Extract Name tag
-    const tagBlocks = extractAllXmlBlocks(item, "item");
-    let name = instanceId;
-    for (const tb of tagBlocks) {
-      if (extractXmlValue(tb, "key") === "Name") {
-        name = extractXmlValue(tb, "value") || instanceId;
-        break;
-      }
-    }
+    const tags = extractEc2Tags(item);
+    const name = tags.Name || instanceId;
 
     results.push({
       externalId: instanceId,
@@ -291,7 +384,7 @@ function parseEc2Instances(xml: string, region: string): Omit<InfraResource, "id
       relationships: [
         ...(subnetId ? [{ targetResourceId: subnetId, type: "runs-in" as const }] : []),
       ],
-      tags: {},
+      tags,
       networkInfo: {
         vpcId: vpcId || undefined,
         subnetId: subnetId || undefined,
@@ -314,16 +407,17 @@ function parseVpcs(xml: string, region: string): Omit<InfraResource, "id" | "acc
 
     const cidr = extractXmlValue(item, "cidrBlock");
     const isDefault = extractXmlValue(item, "isDefault") === "true";
+    const tags = extractEc2Tags(item);
 
     results.push({
       externalId: vpcId,
       provider: "aws",
       region,
       type: "vpc" as InfraResourceType,
-      name: vpcId,
+      name: tags.Name || vpcId,
       properties: { cidr, isDefault },
       relationships: [],
-      tags: {},
+      tags,
       networkInfo: { vpcId },
     });
   }
@@ -343,16 +437,17 @@ function parseSubnets(xml: string, region: string): Omit<InfraResource, "id" | "
     const cidr = extractXmlValue(item, "cidrBlock");
     const az = extractXmlValue(item, "availabilityZone");
     const isPublic = extractXmlValue(item, "mapPublicIpOnLaunch") === "true";
+    const tags = extractEc2Tags(item);
 
     results.push({
       externalId: subnetId,
       provider: "aws",
       region,
       type: "subnet" as InfraResourceType,
-      name: subnetId,
+      name: tags.Name || subnetId,
       properties: { cidr, az, public: isPublic },
       relationships: [{ targetResourceId: vpcId, type: "runs-in" }],
-      tags: {},
+      tags,
       networkInfo: { vpcId, subnetId },
     });
   }
@@ -360,7 +455,39 @@ function parseSubnets(xml: string, region: string): Omit<InfraResource, "id" | "
   return results;
 }
 
-function parseSecurityGroups(xml: string, region: string): Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] {
+interface SecurityGroupRule {
+  protocol: string;
+  fromPort: string;
+  toPort: string;
+  cidrs: string[];
+}
+
+// AWS's DescribeSecurityGroups response nests each rule as its own <item>
+// inside <ipPermissions>/<ipPermissionsEgress> — real port/protocol/source
+// data, not just the group's own id/name/description. Wasn't parsed at
+// all before (the outer per-group loop only ever read groupId/groupName/
+// vpcId/groupDescription), which is exactly the "show me inbound/outbound
+// ports" gap that was missing.
+export function parseSecurityGroupRules(groupItemXml: string, wrapperTag: "ipPermissions" | "ipPermissionsEgress"): SecurityGroupRule[] {
+  const wrapperContent = extractXmlValue(groupItemXml, wrapperTag);
+  if (!wrapperContent) return [];
+  return extractAllXmlBlocks(wrapperContent, "item").map((rule) => {
+    const ipRangesBlock = extractXmlValue(rule, "ipRanges");
+    const cidrs = ipRangesBlock
+      ? extractAllXmlBlocks(ipRangesBlock, "item")
+          .map((c) => extractXmlValue(c, "cidrIp"))
+          .filter(Boolean)
+      : [];
+    return {
+      protocol: extractXmlValue(rule, "ipProtocol") || "all",
+      fromPort: extractXmlValue(rule, "fromPort"),
+      toPort: extractXmlValue(rule, "toPort"),
+      cidrs,
+    };
+  });
+}
+
+export function parseSecurityGroups(xml: string, region: string): Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] {
   const results: Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] = [];
   const items = extractAllXmlBlocks(xml, "item");
 
@@ -371,6 +498,9 @@ function parseSecurityGroups(xml: string, region: string): Omit<InfraResource, "
     const groupName = extractXmlValue(item, "groupName");
     const vpcId = extractXmlValue(item, "vpcId");
     const description = extractXmlValue(item, "groupDescription");
+    const inboundRules = parseSecurityGroupRules(item, "ipPermissions");
+    const outboundRules = parseSecurityGroupRules(item, "ipPermissionsEgress");
+    const tags = extractEc2Tags(item);
 
     results.push({
       externalId: groupId,
@@ -378,7 +508,42 @@ function parseSecurityGroups(xml: string, region: string): Omit<InfraResource, "
       region,
       type: "security-group" as InfraResourceType,
       name: groupName || groupId,
-      properties: { description },
+      properties: { description, inboundRules, outboundRules },
+      relationships: vpcId ? [{ targetResourceId: vpcId, type: "runs-in" }] : [],
+      tags,
+      networkInfo: { vpcId: vpcId || undefined },
+    });
+  }
+
+  return results;
+}
+
+function parseRdsInstances(xml: string, region: string): Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] {
+  const results: Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] = [];
+  // RDS's DescribeDBInstances response repeats <DBInstance>, not <item> —
+  // a different element name from the EC2-family calls above.
+  const items = extractAllXmlBlocks(xml, "DBInstance");
+
+  for (const item of items) {
+    const dbInstanceId = extractXmlValue(item, "DBInstanceIdentifier");
+    if (!dbInstanceId) continue;
+
+    const engine = extractXmlValue(item, "Engine");
+    const instanceClass = extractXmlValue(item, "DBInstanceClass");
+    const status = extractXmlValue(item, "DBInstanceStatus");
+    const multiAz = extractXmlValue(item, "MultiAZ") === "true";
+    const address = extractXmlValue(item, "Address");
+    const vpcId = extractXmlValue(item, "VpcId");
+
+    results.push({
+      externalId: dbInstanceId,
+      provider: "aws",
+      region,
+      // Field names (engine/instanceType/multiAz/dnsName/state) match what
+      // NodePropertiesPanel.tsx's "rds-instance" section already renders.
+      type: "rds-instance" as InfraResourceType,
+      name: dbInstanceId,
+      properties: { engine, instanceType: instanceClass, state: status, multiAz, dnsName: address },
       relationships: vpcId ? [{ targetResourceId: vpcId, type: "runs-in" }] : [],
       tags: {},
       networkInfo: { vpcId: vpcId || undefined },
@@ -411,6 +576,51 @@ function parseLoadBalancers(xml: string, region: string): Omit<InfraResource, "i
       relationships: [],
       tags: {},
       networkInfo: { vpcId: vpcId || undefined },
+    });
+  }
+
+  return results;
+}
+
+interface LambdaListResponse {
+  Functions?: {
+    FunctionName: string;
+    FunctionArn?: string;
+    Runtime?: string;
+    MemorySize?: number;
+    Timeout?: number;
+    LastModified?: string;
+    VpcConfig?: { VpcId?: string; SubnetIds?: string[]; SecurityGroupIds?: string[] };
+  }[];
+}
+
+export function parseLambdaFunctions(response: unknown, region: string): Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] {
+  const results: Omit<InfraResource, "id" | "accountId" | "discoveredAt">[] = [];
+  const functions = (response as LambdaListResponse)?.Functions ?? [];
+
+  for (const fn of functions) {
+    if (!fn.FunctionName) continue;
+    const vpcId = fn.VpcConfig?.VpcId;
+
+    results.push({
+      externalId: fn.FunctionName,
+      provider: "aws",
+      region,
+      type: "lambda" as InfraResourceType,
+      name: fn.FunctionName,
+      properties: {
+        runtime: fn.Runtime,
+        memory: fn.MemorySize,
+        timeout: fn.Timeout,
+        lastModified: fn.LastModified,
+        arn: fn.FunctionArn,
+      },
+      relationships: vpcId ? [{ targetResourceId: vpcId, type: "runs-in" }] : [],
+      tags: {},
+      networkInfo: {
+        vpcId: vpcId || undefined,
+        securityGroups: fn.VpcConfig?.SecurityGroupIds,
+      },
     });
   }
 

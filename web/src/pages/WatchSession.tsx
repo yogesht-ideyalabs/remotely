@@ -79,7 +79,7 @@ export default function WatchSession() {
     const ws = wsRef.current;
     if (!ws || !sessionType) return;
 
-    if (sessionType === "ssh-agent" || sessionType === "ssh-direct") {
+    if (sessionType === "ssh-agent" || sessionType === "ssh-direct" || sessionType === "kubernetes") {
       if (!termContainerRef.current) return;
       const term = new XTerm({
         cursorBlink: false,
@@ -136,7 +136,7 @@ export default function WatchSession() {
       </div>
       {closeReason && <div className="error-banner">{closeReason}</div>}
 
-      {(sessionType === "ssh-agent" || sessionType === "ssh-direct") && <div className="term-wrap" ref={termContainerRef} />}
+      {(sessionType === "ssh-agent" || sessionType === "ssh-direct" || sessionType === "kubernetes") && <div className="term-wrap" ref={termContainerRef} />}
 
       {sessionType === "rdp" && (
         <div className="term-wrap" style={{ overflow: "auto" }}>

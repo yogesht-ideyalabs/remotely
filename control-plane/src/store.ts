@@ -92,7 +92,7 @@ export interface Organization {
   logoDataUri?: string;
 }
 
-export type ConnectionType = "ssh-direct" | "rdp" | "database";
+export type ConnectionType = "ssh-direct" | "rdp" | "database" | "kubernetes";
 
 export interface Connection {
   id: string;
@@ -122,6 +122,16 @@ export interface Connection {
   // it for a few minutes via sshd's AuthorizedKeysCommand, and revokes it
   // on disconnect. See sshJit.ts for why this isn't OpenSSH certificates.
   sshJitEnabled?: boolean;
+  // kubernetes only: a full kubeconfig (base64-encoded YAML — same content
+  // `kubectl config view --raw` produces), plus the specific
+  // namespace/pod/container this connection execs into. One Connection is
+  // one specific pod, matching how ssh-direct/rdp/database are each one
+  // specific pre-configured target — not a general kubectl-proxy that can
+  // reach anything the credential can see.
+  kubeconfig?: string;
+  k8sNamespace?: string;
+  k8sPodName?: string;
+  k8sContainerName?: string;
 }
 
 export interface SshKey {
@@ -592,6 +602,81 @@ export function setSiemConfig(patch: { enabled: boolean; webhookUrl: string; sec
   siemConfig = { ...patch, updatedAt: Date.now(), updatedBy };
   saveRow("siemConfig", "global", siemConfig);
   return siemConfig;
+}
+
+// ---------- Webhook plugins (many independent, event-filtered targets —
+// contrast with SIEM export above, which is one global, unfiltered stream) ----------
+
+export interface WebhookPlugin {
+  id: string;
+  name: string;
+  enabled: boolean;
+  // Which audit eventTypes this plugin fires on — empty array means "all",
+  // same convention Role.resourceTypes already uses for "unrestricted".
+  eventTypes: string[];
+  webhookUrl: string;
+  secret: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+}
+
+export const webhookPlugins: WebhookPlugin[] = loadTable<WebhookPlugin>("webhookPlugins");
+
+export function listWebhookPlugins(): WebhookPlugin[] {
+  return webhookPlugins;
+}
+
+export function getWebhookPlugin(id: string): WebhookPlugin | undefined {
+  return webhookPlugins.find((p) => p.id === id);
+}
+
+export function createWebhookPlugin(data: Omit<WebhookPlugin, "id" | "createdAt" | "updatedAt">): WebhookPlugin {
+  const plugin: WebhookPlugin = { ...data, id: crypto.randomUUID(), createdAt: Date.now(), updatedAt: Date.now() };
+  webhookPlugins.push(plugin);
+  saveRow("webhookPlugins", plugin.id, plugin);
+  return plugin;
+}
+
+export function updateWebhookPlugin(id: string, changes: Partial<Omit<WebhookPlugin, "id" | "createdAt" | "createdBy">>): WebhookPlugin | undefined {
+  const plugin = getWebhookPlugin(id);
+  if (!plugin) return undefined;
+  Object.assign(plugin, changes, { updatedAt: Date.now() });
+  saveRow("webhookPlugins", plugin.id, plugin);
+  return plugin;
+}
+
+export function deleteWebhookPlugin(id: string): boolean {
+  const idx = webhookPlugins.findIndex((p) => p.id === id);
+  if (idx === -1) return false;
+  webhookPlugins.splice(idx, 1);
+  deleteRow("webhookPlugins", id);
+  return true;
+}
+
+// ---------- Per-user notification state ----------
+// Just a "cleared before this timestamp" marker, not a per-notification
+// read/unread table — matches how a real notification bell's "clear"
+// action almost always works (one watermark, not N rows to maintain).
+
+interface NotificationState {
+  username: string;
+  clearedAt: number;
+}
+
+const notificationState = new Map<string, NotificationState>(
+  loadTable<NotificationState>("notificationState").map((s) => [s.username, s])
+);
+
+export function getNotificationClearedAt(username: string): number {
+  return notificationState.get(username)?.clearedAt ?? 0;
+}
+
+export function clearNotificationsFor(username: string): number {
+  const clearedAt = Date.now();
+  notificationState.set(username, { username, clearedAt });
+  saveRow("notificationState", username, { username, clearedAt });
+  return clearedAt;
 }
 
 // ---------- WebAuthn / passkey credentials (per-user) ----------

@@ -1,28 +1,38 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchNotifications, type NotificationEvent } from "./api";
+import { Link } from "react-router-dom";
+import { fetchNotifications, clearNotifications, type NotificationEvent } from "./api";
 import { useDismiss } from "./useDismiss";
 
 export default function NotificationBell() {
   const [items, setItems] = useState<NotificationEvent[]>([]);
   const [open, setOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useDismiss(ref, open, () => setOpen(false));
 
+  function load() {
+    fetchNotifications()
+      .then(setItems)
+      .catch(() => {});
+  }
+
   useEffect(() => {
-    let mounted = true;
-    function load() {
-      fetchNotifications()
-        .then((data) => mounted && setItems(data))
-        .catch(() => {});
-    }
     load();
     const interval = setInterval(load, 15000);
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, []);
+
+  async function handleClear(e: React.MouseEvent) {
+    e.stopPropagation();
+    setClearing(true);
+    try {
+      await clearNotifications();
+      setItems([]);
+    } finally {
+      setClearing(false);
+    }
+  }
 
   return (
     <div style={{ position: "relative" }} ref={ref}>
@@ -32,8 +42,19 @@ export default function NotificationBell() {
       </button>
       {open && (
         <div className="notif-panel">
-          <div className="notif-panel-header">Notifications</div>
-          {items.length === 0 && <div className="hint" style={{ padding: 12 }}>Nothing to see here.</div>}
+          <div className="notif-panel-header">
+            <span>Notifications</span>
+            {items.length > 0 && (
+              <button className="link" onClick={handleClear} disabled={clearing}>
+                {clearing ? "Clearing..." : "Clear"}
+              </button>
+            )}
+          </div>
+          {items.length === 0 && (
+            <div className="hint" style={{ padding: 12 }}>
+              Nothing new.
+            </div>
+          )}
           {items.map((n) => (
             <div className="notif-item" key={n.id}>
               <span className={`event-badge ${n.eventType}`}>{n.eventType}</span>
@@ -43,6 +64,9 @@ export default function NotificationBell() {
               </div>
             </div>
           ))}
+          <Link to="/notifications" className="notif-panel-footer" onClick={() => setOpen(false)}>
+            View all notifications (last 30 days) →
+          </Link>
         </div>
       )}
     </div>

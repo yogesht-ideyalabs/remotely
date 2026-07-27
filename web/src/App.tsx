@@ -21,8 +21,12 @@ import Dashboard from "./pages/Dashboard";
 import WatchSession from "./pages/WatchSession";
 import AccessRequests from "./pages/AccessRequests";
 import SiemExport from "./pages/SiemExport";
+import Compliance from "./pages/Compliance";
+import Plugins from "./pages/Plugins";
+import Notifications from "./pages/Notifications";
 import InfraMap from "./pages/InfraMap";
 import DiagramEditor from "./pages/DiagramEditor";
+import Architecture from "./pages/Architecture";
 
 export default function App() {
   return (
@@ -44,6 +48,9 @@ export default function App() {
           <Route path="/admin/roles" element={<Roles />} />
           <Route path="/admin/organizations" element={<Organizations />} />
           <Route path="/admin/siem" element={<SiemExport />} />
+          <Route path="/admin/compliance" element={<Compliance />} />
+          <Route path="/admin/plugins" element={<Plugins />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="/admin/agents" element={<AgentHealth />} />
           <Route path="/files/:resourceId" element={<Files />} />
           <Route path="/active-sessions" element={<Sessions />} />
@@ -53,6 +60,7 @@ export default function App() {
           <Route path="/access-requests" element={<AccessRequests />} />
           <Route path="/admin/infra-map" element={<InfraMap />} />
           <Route path="/admin/diagram-editor" element={<DiagramEditor />} />
+          <Route path="/admin/architecture" element={<Architecture />} />
         </Route>
       </Routes>
     </BrowserRouter>

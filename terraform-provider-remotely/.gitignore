@@ -1,0 +1,5 @@
+terraform-provider-remotely
+examples/**/.terraform/
+examples/**/.terraform.lock.hcl
+examples/**/terraform.tfstate
+examples/**/terraform.tfstate.backup

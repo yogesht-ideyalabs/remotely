@@ -30,6 +30,10 @@ const emptyForm = {
   databaseName: "",
   sshKeyId: "",
   sshJitEnabled: false,
+  kubeconfigText: "",
+  k8sNamespace: "",
+  k8sPodName: "",
+  k8sContainerName: "",
 };
 
 export default function Connections() {
@@ -96,6 +100,10 @@ export default function Connections() {
       databaseName: c.databaseName,
       sshKeyId: c.sshKeyId ?? "",
       sshJitEnabled: Boolean(c.sshJitEnabled),
+      kubeconfigText: c.kubeconfig ? decodeURIComponent(escape(atob(c.kubeconfig))) : "",
+      k8sNamespace: c.k8sNamespace ?? "",
+      k8sPodName: c.k8sPodName ?? "",
+      k8sContainerName: c.k8sContainerName ?? "",
     });
     setEditing(c.id);
   }
@@ -118,11 +126,25 @@ export default function Connections() {
       folder: form.folder,
       host: form.host,
       port: Number(form.port) || 0,
-      username: form.username,
+      // Kubernetes has no per-connection "login" the way ssh/rdp/database
+      // do (there's no login negotiation in a pod exec) — reuse the same
+      // logins-allowlist RBAC mechanism everywhere else with one fixed
+      // conventional value, so "can this role use kubernetes connections
+      // at all" is still gated the normal way instead of inventing a
+      // separate concept just for this type.
+      username: form.type === "kubernetes" ? "exec" : form.username,
       ...(form.password ? { password: form.password } : {}),
       databaseName: form.databaseName,
       sshKeyId: form.type === "ssh-direct" ? form.sshKeyId || undefined : undefined,
       sshJitEnabled: form.type === "ssh-direct" ? form.sshJitEnabled : false,
+      ...(form.type === "kubernetes"
+        ? {
+            kubeconfig: form.kubeconfigText ? btoa(unescape(encodeURIComponent(form.kubeconfigText))) : undefined,
+            k8sNamespace: form.k8sNamespace,
+            k8sPodName: form.k8sPodName,
+            k8sContainerName: form.k8sContainerName || undefined,
+          }
+        : {}),
     };
     try {
       if (editing === "") {
@@ -227,7 +249,7 @@ export default function Connections() {
     }
   }
 
-  const defaultPorts: Record<ConnectionType, string> = { "ssh-direct": "22", rdp: "3389", database: "5432" };
+  const defaultPorts: Record<ConnectionType, string> = { "ssh-direct": "22", rdp: "3389", database: "5432", kubernetes: "" };
 
   return (
     <div>
@@ -258,6 +280,7 @@ export default function Connections() {
               <option value="ssh-direct">SSH (direct)</option>
               <option value="rdp">RDP</option>
               <option value="database">Database (Postgres)</option>
+              <option value="kubernetes">Kubernetes (pod exec)</option>
             </select>
             <select value={form.organization} onChange={(e) => setForm({ ...form, organization: e.target.value })}>
               <option value="">— no organization —</option>
@@ -269,27 +292,64 @@ export default function Connections() {
             </select>
             <input placeholder="folder, e.g. Servers" value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })} />
           </div>
-          <div className="form-row">
-            <input placeholder="host" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
-            <input placeholder="port" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} />
-            <input placeholder="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
-            <input
-              placeholder={
-                form.type === "ssh-direct" && (form.sshKeyId || form.sshJitEnabled)
-                  ? "password (unused for this auth method)"
-                  : editing === ""
-                  ? "password"
-                  : "password (leave blank to keep)"
-              }
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              disabled={form.type === "ssh-direct" && (Boolean(form.sshKeyId) || form.sshJitEnabled)}
-            />
-            {form.type === "database" && (
-              <input placeholder="database name" value={form.databaseName} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
-            )}
-          </div>
+          {form.type !== "kubernetes" && (
+            <div className="form-row">
+              <input placeholder="host" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
+              <input placeholder="port" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} />
+              <input placeholder="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+              <input
+                placeholder={
+                  form.type === "ssh-direct" && (form.sshKeyId || form.sshJitEnabled)
+                    ? "password (unused for this auth method)"
+                    : editing === ""
+                    ? "password"
+                    : "password (leave blank to keep)"
+                }
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                disabled={form.type === "ssh-direct" && (Boolean(form.sshKeyId) || form.sshJitEnabled)}
+              />
+              {form.type === "database" && (
+                <input placeholder="database name" value={form.databaseName} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
+              )}
+            </div>
+          )}
+          {form.type === "kubernetes" && (
+            <>
+              <div className="form-row">
+                <div style={{ flex: "1 1 100%" }} className="hint">
+                  A role needs "exec" in its allowed logins to use any kubernetes connection — there's no per-pod
+                  login the way ssh/database have, so this is the one fixed value that gates access.
+                </div>
+              </div>
+              <div className="form-row">
+                <input placeholder="namespace" value={form.k8sNamespace} onChange={(e) => setForm({ ...form, k8sNamespace: e.target.value })} />
+                <input placeholder="pod name" value={form.k8sPodName} onChange={(e) => setForm({ ...form, k8sPodName: e.target.value })} />
+                <input
+                  placeholder="container name (optional — defaults to the pod's first container)"
+                  style={{ minWidth: 320 }}
+                  value={form.k8sContainerName}
+                  onChange={(e) => setForm({ ...form, k8sContainerName: e.target.value })}
+                />
+              </div>
+              <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                <div className="hint">
+                  Kubeconfig (full YAML, same content <code>kubectl config view --raw</code> produces). One
+                  connection execs into exactly this one pod/container, not a general kubectl-proxy. Note: like the
+                  password field above, this round-trips to any admin who can view connections — same POC-level
+                  tradeoff, not hidden or specially protected.
+                </div>
+                <textarea
+                  rows={8}
+                  style={{ fontFamily: "SF Mono, ui-monospace, monospace", fontSize: 11 }}
+                  placeholder={editing !== "" ? "leave blank to keep the existing kubeconfig" : "apiVersion: v1\nclusters:\n..."}
+                  value={form.kubeconfigText}
+                  onChange={(e) => setForm({ ...form, kubeconfigText: e.target.value })}
+                />
+              </div>
+            </>
+          )}
           {form.type === "ssh-direct" && (
             <div className="form-row">
               <div style={{ flex: 1, minWidth: 260 }}>

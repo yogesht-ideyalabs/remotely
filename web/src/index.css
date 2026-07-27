@@ -566,9 +566,27 @@ button.danger-link { background: none; border: none; color: var(--danger); curso
   box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.45), 0 0 0 1px color-mix(in srgb, white 4%, transparent) inset;
   z-index: 61;
 }
-.notif-panel-header { padding: 10px 14px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--panel-border); }
+.notif-panel-header {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .notif-item { padding: 10px 14px; border-bottom: 1px solid var(--panel-border); }
 .notif-item:last-child { border-bottom: none; }
+.notif-panel-footer {
+  display: block;
+  padding: 10px 14px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--accent);
+  text-decoration: none;
+  border-top: 1px solid var(--panel-border);
+}
+.notif-panel-footer:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 
 textarea { font-family: inherit; }
 
@@ -604,6 +622,23 @@ textarea { font-family: inherit; }
 }
 .cmdk-input:focus { outline: none; border-color: var(--panel-border); }
 .cmdk-list { overflow-y: auto; padding: 6px; }
+.plugin-event-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.plugin-event-category { font-size: 11px; }
+.plugin-event-category-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; cursor: pointer; }
+.plugin-event-list { display: flex; flex-direction: column; gap: 2px; padding-left: 18px; }
+.plugin-event-item { display: flex; align-items: center; gap: 6px; color: var(--text-dim); cursor: pointer; font-family: SF Mono, ui-monospace, monospace; font-size: 10.5px; }
+.plugin-event-item:hover { color: var(--text); }
+
 .cmdk-section + .cmdk-section { margin-top: 4px; }
 .cmdk-section-header {
   padding: 8px 12px 4px;
@@ -709,6 +744,8 @@ textarea { font-family: inherit; }
   color: var(--text); padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.85rem;
 }
 .add-account-form .form-actions { grid-column: 1 / -1; display: flex; gap: 0.5rem; }
+.edit-enabled-toggle { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--text); }
+.edit-enabled-toggle input { padding: 0; }
 
 .accounts-list { display: flex; flex-direction: column; gap: 0.5rem; }
 .account-card {
@@ -772,6 +809,8 @@ textarea { font-family: inherit; }
   transition: background 0.15s;
 }
 .toolbar-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
+.toolbar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.toolbar-btn:disabled:hover { background: var(--bg); border-color: var(--panel-border); }
 .toolbar-btn-danger:hover { background: rgba(255,91,110,0.1); border-color: var(--danger); color: var(--danger); }
 
 .diagram-editor-body {
@@ -820,27 +859,128 @@ textarea { font-family: inherit; }
 .shape-icon { font-size: 1rem; flex-shrink: 0; }
 .shape-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shape-badge { font-size: 0.6rem; background: var(--accent-dim); color: var(--accent); padding: 0.1rem 0.3rem; border-radius: 3px; }
+.shape-icon-custom { width: 1rem; height: 1rem; object-fit: contain; }
+.shape-delete {
+  background: none; border: none; color: var(--text-dim); font-size: 0.65rem;
+  padding: 0.1rem 0.3rem; border-radius: 3px; cursor: pointer; margin-left: auto;
+}
+.shape-delete:hover { background: rgba(255,91,110,0.15); color: var(--danger); }
+
+.palette-upload {
+  padding: 0.75rem; border-top: 1px solid var(--panel-border); display: flex; flex-direction: column; gap: 0.4rem;
+}
+.palette-upload-label { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin: 0; }
+.palette-upload-error { font-size: 0.7rem; color: var(--danger); margin: 0; }
+.palette-upload input[type="text"] {
+  background: var(--bg); border: 1px solid var(--panel-border); color: var(--text);
+  padding: 0.35rem 0.6rem; border-radius: 4px; font-size: 0.78rem;
+}
+.palette-upload-btn {
+  display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+  background: var(--bg); border: 1px dashed var(--panel-border); color: var(--text-dim);
+  padding: 0.4rem; border-radius: 4px; font-size: 0.78rem; cursor: pointer; text-align: center;
+}
+.palette-upload-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.cloud-icon-custom-img { width: 100%; height: 100%; object-fit: contain; }
 
 /* Canvas */
-.diagram-canvas { flex: 1; background: var(--bg); }
+.diagram-canvas { position: relative; flex: 1; background: var(--bg); display: flex; flex-direction: column; }
+.diagram-canvas-inner { position: relative; flex: 1; min-height: 0; }
+
+.alignment-guides { position: absolute; inset: 0; pointer-events: none; z-index: 40; }
+
+/* Presence + remote-save notification (DiagramEditor.tsx) */
+.collab-presence {
+  position: absolute; top: 10px; right: 10px; z-index: 30;
+  background: var(--panel); border: 1px solid var(--panel-border); color: var(--text-dim);
+  padding: 0.3rem 0.65rem; border-radius: 14px; font-size: 0.72rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+.collab-update-banner {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 45;
+  display: flex; align-items: center; gap: 0.6rem;
+  background: var(--accent-dim); border: 1px solid var(--accent); color: var(--text);
+  padding: 0.45rem 0.75rem; border-radius: 8px; font-size: 0.78rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+.alignment-guide-line { position: absolute; background: #ff3d9a; }
+.alignment-guide-line.vertical { top: 0; bottom: 0; width: 1px; }
+.alignment-guide-line.horizontal { left: 0; right: 0; height: 1px; }
+
+/* Multi-page tabs (PageTabs.tsx) — bottom strip, draw.io-style. Takes up
+   real flex layout space (not an absolute overlay) so it doesn't collide
+   with React Flow's own bottom-left Controls / bottom-right MiniMap /
+   bottom-center hint panel. */
+.page-tabs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: var(--panel);
+  border-top: 1px solid var(--panel-border);
+  padding: 0.3rem 0.5rem;
+  overflow-x: auto;
+}
+.page-tab {
+  display: flex; align-items: center; gap: 0.4rem;
+  background: var(--bg); border: 1px solid var(--panel-border); color: var(--text-dim);
+  padding: 0.3rem 0.7rem; border-radius: 6px 6px 0 0; font-size: 0.78rem; cursor: pointer;
+  white-space: nowrap;
+}
+.page-tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.page-tab-close {
+  font-size: 0.65rem; color: var(--text-dim); border-radius: 50%;
+  width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;
+}
+.page-tab-close:hover { background: rgba(255,91,110,0.2); color: var(--danger); }
+.page-tab-add {
+  background: var(--bg); border: 1px dashed var(--panel-border); color: var(--text-dim);
+  width: 26px; height: 26px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; flex-shrink: 0;
+}
+.page-tab-add:hover { border-color: var(--accent); color: var(--accent); }
 .diagram-canvas .react-flow__node { cursor: grab; }
 .diagram-canvas .react-flow__node:active { cursor: grabbing; }
 
-/* Infra Node */
+/* Infra Node — draw.io-style shape card: a colored icon badge (provider/
+   type accent color) alongside the label, subtle elevation, connection
+   handles only visible on hover/selection instead of always-on clutter. */
 .infra-node {
+  --node-accent: #5b8cff;
+  position: relative;
   background: var(--panel);
-  border: 2px solid var(--panel-border);
-  border-radius: 8px;
-  padding: 0.5rem 0.75rem;
-  min-width: 100px;
-  text-align: center;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
-.infra-node:hover { border-color: var(--accent); }
-.infra-node-icon { font-size: 1.5rem; margin-bottom: 0.2rem; }
-.infra-node-label { font-size: 0.75rem; font-weight: 600; color: var(--text); line-height: 1.2; }
-.infra-node-type { font-size: 0.6rem; color: var(--text-dim); margin-top: 0.1rem; }
-.infra-handle { width: 8px; height: 8px; background: var(--accent); border: 2px solid var(--panel); }
+.infra-node:hover { border-color: var(--node-accent); box-shadow: 0 2px 8px rgba(0,0,0,0.25); transform: translateY(-1px); }
+.infra-node-selected { border-color: var(--node-accent); box-shadow: 0 0 0 2px var(--node-accent), 0 2px 8px rgba(0,0,0,0.3); }
+.cloud-icon-badge {
+  flex-shrink: 0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15), 0 1px 2px rgba(0,0,0,0.3);
+}
+.cloud-icon-emoji { font-size: 1.05rem; line-height: 1; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4)); }
+.infra-node-text { text-align: left; min-width: 0; }
+.infra-node-locked { opacity: 0.85; }
+.infra-node-lock { position: absolute; top: -6px; right: -6px; font-size: 0.7rem; background: var(--panel); border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
+.infra-node-label { font-size: 0.75rem; font-weight: 600; color: var(--text); line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.infra-node-type { font-size: 0.6rem; color: var(--text-dim); margin-top: 0.1rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.infra-handle {
+  width: 8px; height: 8px; background: var(--node-accent, var(--accent)); border: 2px solid var(--panel);
+  opacity: 0; transition: opacity 0.12s;
+}
+.infra-node:hover .infra-handle, .infra-node-selected .infra-handle { opacity: 1; }
 
 /* Group Node */
 .group-node-header {
@@ -850,6 +990,10 @@ textarea { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  background: var(--panel);
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
 }
 .group-node-icon { font-size: 1rem; }
 .group-node-label { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
@@ -887,6 +1031,15 @@ textarea { font-family: inherit; }
 }
 .diagram-list-item:hover { border-color: var(--accent); background: var(--accent-dim); }
 .diagram-list-meta { font-size: 0.7rem; color: var(--text-dim); }
+.diagram-list-item-row { display: flex; align-items: stretch; gap: 0.4rem; }
+.diagram-list-item-row .diagram-list-item { flex: 1; }
+.diagram-list-item-row > .btn-sm { flex-shrink: 0; }
+.version-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  background: var(--bg); border: 1px solid var(--panel-border);
+  padding: 0.6rem 0.75rem; border-radius: 6px;
+}
+.version-row strong { display: block; font-size: 0.85rem; }
 .edge-label-input {
   width: 100%; background: var(--bg); border: 1px solid var(--panel-border);
   color: var(--text); padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.9rem;
@@ -964,8 +1117,183 @@ textarea { font-family: inherit; }
   border-color: var(--accent); outline: none;
 }
 .props-meta { font-size: 0.65rem; color: var(--text-dim); display: flex; gap: 0.75rem; margin-top: 0.5rem; }
+.props-empty { font-size: 0.75rem; color: var(--text-dim); font-style: italic; }
+.props-connections { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.props-connections li {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.78rem; padding: 0.3rem 0.5rem;
+  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 4px;
+}
+.props-conn-arrow { color: var(--accent); font-weight: 600; }
+.props-conn-label { flex: 1; }
+.props-conn-edge-label { font-size: 0.65rem; color: var(--text-dim); background: var(--accent-dim); padding: 0.1rem 0.4rem; border-radius: 999px; }
+
+.props-tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.props-tags li {
+  display: flex; align-items: center; font-size: 0.7rem;
+  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 4px; overflow: hidden;
+}
+.props-tag-key { padding: 0.2rem 0.4rem; background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+.props-tag-value { padding: 0.2rem 0.4rem; color: var(--text); }
+
+.props-net-row {
+  display: flex; justify-content: space-between; gap: 0.5rem;
+  font-size: 0.75rem; padding: 0.25rem 0; border-bottom: 1px solid var(--panel-border);
+}
+.props-net-row:last-child { border-bottom: none; }
+.props-net-row > span:first-child { color: var(--text-dim); }
+.props-net-row > span:last-child { text-align: right; word-break: break-word; }
+
+.props-rules-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin: 0.5rem 0 0.25rem; }
+.props-rules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.props-rules li {
+  font-size: 0.72rem; font-family: SF Mono, ui-monospace, monospace;
+  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 4px; padding: 0.25rem 0.5rem;
+}
 .props-notes {
   width: 100%; background: var(--bg); border: 1px solid var(--panel-border);
   color: var(--text); padding: 0.4rem 0.6rem; border-radius: 4px;
   font-size: 0.8rem; font-family: inherit; resize: vertical;
+}
+
+/* ─── Architecture Page ───────────────────────────────────────────────────── */
+
+.architecture-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 52px);
+  overflow: hidden;
+  padding: 1rem 1.5rem 0;
+}
+.architecture-page .page-header { margin-bottom: 1rem; flex-shrink: 0; }
+.architecture-page .page-header h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+.architecture-page .subtitle { color: var(--text-dim); margin: 0; font-size: 0.85rem; }
+
+.architecture-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+.strategy-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.strategy-tab {
+  background: var(--panel); border: 1px solid var(--panel-border); color: var(--text-dim);
+  padding: 0.4rem 0.85rem; border-radius: 20px; font-size: 0.8rem; cursor: pointer;
+  transition: all 0.15s;
+}
+.strategy-tab:hover { border-color: var(--accent); color: var(--text); }
+.strategy-tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.architecture-actions { display: flex; gap: 0.5rem; }
+
+.architecture-empty { margin-bottom: 1rem; }
+.architecture-empty a { color: var(--accent); }
+
+.diagram-subtabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+.diagram-subtab {
+  display: flex; align-items: center; gap: 0.4rem;
+  background: var(--bg); border: 1px solid var(--panel-border); color: var(--text);
+  padding: 0.3rem 0.7rem; border-radius: 6px; font-size: 0.78rem; cursor: pointer;
+}
+.diagram-subtab:hover { border-color: var(--accent); }
+.diagram-subtab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.diagram-subtab-count {
+  font-size: 0.65rem; background: var(--panel-border); color: var(--text-dim);
+  padding: 0.05rem 0.35rem; border-radius: 8px;
+}
+.diagram-subtab.active .diagram-subtab-count { background: var(--accent); color: var(--bg); }
+
+.architecture-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 0;
+}
+.architecture-canvas { flex: 1; background: var(--bg); }
+
+/* ─── Diagram Editor: draw.io-style additions ─────────────────────────────── */
+
+/* Right-click context menu */
+.context-menu {
+  position: fixed;
+  z-index: 500;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  padding: 0.3rem;
+  min-width: 170px;
+  display: flex;
+  flex-direction: column;
+}
+.context-menu-item {
+  background: none; border: none; color: var(--text);
+  text-align: left; padding: 0.4rem 0.6rem; border-radius: 5px;
+  font-size: 0.8rem; cursor: pointer;
+}
+.context-menu-item:hover:not(:disabled) { background: var(--accent-dim); }
+.context-menu-item:disabled { opacity: 0.4; cursor: not-allowed; }
+.context-menu-item.danger { color: var(--danger); }
+.context-menu-item.danger:hover:not(:disabled) { background: rgba(255,91,110,0.1); }
+.context-menu-divider { height: 1px; background: var(--panel-border); margin: 0.25rem 0.4rem; }
+
+/* Floating align/distribute toolbar (React Flow Panel content) */
+.align-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+.align-toolbar-count { font-size: 0.7rem; color: var(--text-dim); white-space: nowrap; }
+.align-toolbar-group { display: flex; gap: 0.15rem; border-left: 1px solid var(--panel-border); padding-left: 0.5rem; }
+.align-toolbar-group button {
+  background: var(--bg); border: 1px solid var(--panel-border); color: var(--text);
+  width: 26px; height: 26px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.align-toolbar-group button:hover { background: var(--accent-dim); border-color: var(--accent); }
+
+/* Edge style editor fields (EdgeLabelEditor.tsx) */
+.edge-editor-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.75rem; font-size: 0.8rem; color: var(--text-dim); }
+.edge-editor-field select, .edge-editor-field input:not([type="checkbox"]):not([type="color"]) {
+  background: var(--bg); border: 1px solid var(--panel-border); color: var(--text);
+  padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem;
+}
+.edge-editor-checkbox { flex-direction: row; align-items: center; gap: 0.5rem; }
+.edge-color-swatches { display: flex; align-items: center; gap: 0.3rem; }
+.edge-color-swatch {
+  width: 22px; height: 22px; border-radius: 5px; border: 2px solid transparent; cursor: pointer;
+}
+.edge-color-swatch.active { border-color: var(--text); }
+.edge-color-custom { width: 26px; height: 22px; border: none; background: none; cursor: pointer; padding: 0; }
+
+/* Node Appearance color swatches (NodePropertiesPanel.tsx) */
+.props-color-swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.props-color-swatch {
+  width: 24px; height: 24px; border-radius: 6px; border: 2px solid transparent; cursor: pointer;
+}
+.props-color-swatch.active { border-color: var(--text); box-shadow: 0 0 0 1px var(--panel); }
+.props-color-custom { width: 28px; height: 24px; border: none; background: none; cursor: pointer; padding: 0; }
+
+/* Keyboard shortcuts modal */
+.shortcuts-table { width: 100%; border-collapse: collapse; margin: 0.5rem 0 1rem; }
+.shortcuts-table td { padding: 0.4rem 0.5rem; font-size: 0.8rem; border-bottom: 1px solid var(--panel-border); }
+.shortcuts-table td:first-child { width: 40%; }
+.shortcuts-table kbd {
+  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 4px;
+  padding: 0.15rem 0.4rem; font-size: 0.75rem; font-family: SF Mono, ui-monospace, monospace;
 }
