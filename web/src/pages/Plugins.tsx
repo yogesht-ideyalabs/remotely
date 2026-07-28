@@ -104,7 +104,7 @@ export default function Plugins() {
               <input placeholder="plugin name, e.g. Slack — access requests" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={{ minWidth: 280 }} />
             </div>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} style={{ width: "auto", margin: 0 }} />
+              <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
               Enabled
             </label>
           </div>
@@ -135,13 +135,13 @@ export default function Plugins() {
                 return (
                   <div key={cat.id} className="plugin-event-category">
                     <label className="plugin-event-category-header">
-                      <input type="checkbox" checked={allSelected} onChange={() => toggleCategory(cat.eventTypes)} style={{ width: "auto", margin: 0 }} />
+                      <input type="checkbox" checked={allSelected} onChange={() => toggleCategory(cat.eventTypes)} />
                       <b>{cat.label}</b>
                     </label>
                     <div className="plugin-event-list">
                       {cat.eventTypes.map((t) => (
                         <label key={t} className="plugin-event-item" title={t}>
-                          <input type="checkbox" checked={form.eventTypes.includes(t)} onChange={() => toggleEventType(t)} style={{ width: "auto", margin: 0, flexShrink: 0, marginTop: 1 }} />
+                          <input type="checkbox" checked={form.eventTypes.includes(t)} onChange={() => toggleEventType(t)} style={{ marginTop: 1 }} />
                           <span>{t}</span>
                         </label>
                       ))}

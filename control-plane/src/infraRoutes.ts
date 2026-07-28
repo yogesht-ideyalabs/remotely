@@ -14,7 +14,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { requireAuth, requireAnyAdmin, type AuthedRequest } from "./auth.js";
-import { logAudit } from "./store.js";
+import { logAudit, getConnection } from "./store.js";
 import {
   listInfraAccounts,
   getInfraAccount,
@@ -26,6 +26,8 @@ import {
   pruneStaleResources,
   generateDiagram,
   getInfraSummary,
+  getInfraResource,
+  linkInfraResourceToConnection,
   type CloudProvider,
   type DiagramOptions,
   type InfraResourceType,
@@ -117,6 +119,37 @@ infraRouter.get("/resources", (req: Request, res: Response) => {
     type: type as InfraResourceType | undefined,
   });
   res.json(resources);
+});
+
+// Links (or, with connectionId: null, unlinks) a discovered resource to a
+// real RBAC-protected Connection — the only bridge between infra discovery
+// and actual access control (see InfraResource.linkedConnectionId's doc
+// comment in infraDiscovery.ts). Regenerates auto-diagrams immediately so
+// the change shows up on the Architecture page without waiting for the
+// next sync, same as account create/delete already do above.
+infraRouter.put("/resources/:id/link-connection", (req: Request, res: Response) => {
+  const authReq = req as AuthedRequest;
+  const { connectionId } = req.body as { connectionId: string | null };
+
+  const resource = getInfraResource(req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "Resource not found" });
+    return;
+  }
+  if (connectionId && !getConnection(connectionId)) {
+    res.status(400).json({ error: "Connection not found" });
+    return;
+  }
+
+  const updated = linkInfraResourceToConnection(req.params.id, connectionId);
+  logAudit(
+    authReq.user!.sub,
+    connectionId ? "infra_resource_linked" : "infra_resource_unlinked",
+    resource.id,
+    connectionId ? `Linked ${resource.name} to connection ${connectionId}` : `Unlinked ${resource.name}`
+  );
+  regenerateAutoDiagrams();
+  res.json(updated);
 });
 
 /**

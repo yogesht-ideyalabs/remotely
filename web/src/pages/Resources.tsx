@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchResources, type Resource } from "../api";
 import { useOrgFilter } from "../OrgContext";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 function connectPath(r: Resource): string {
   if (r.type === "rdp") return `/rdp/${r.id}`;
@@ -61,10 +63,12 @@ export default function Resources() {
         style={{ maxWidth: 420, marginBottom: 20 }}
       />
       {error && <div className="error-banner">{error}</div>}
+      {resources === null && <Skeleton lines={5} />}
       {filtered && filtered.length === 0 && (
-        <div className="empty-state">
-          {resources && resources.length > 0 ? "No resources match your search." : "No resources visible to your current role."}
-        </div>
+        <EmptyState
+          icon="resources"
+          message={resources && resources.length > 0 ? "No resources match your search." : "No resources visible to your current role."}
+        />
       )}
       {groups &&
         groups.map(([folder, items]) => (
@@ -87,7 +91,7 @@ export default function Resources() {
                       </span>
                     ))}
                   </div>
-                  <button className="connect-btn" onClick={() => navigate(connectPath(r))}>
+                  <button className="connect-btn connect-btn-primary" onClick={() => navigate(connectPath(r))}>
                     Connect →
                   </button>
                   {(r.type === "ssh-direct" || r.type === "ssh-agent") && (

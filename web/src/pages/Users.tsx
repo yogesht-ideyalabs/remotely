@@ -6,6 +6,7 @@ import {
   createUserApi,
   updateUserApi,
   deleteUserApi,
+  logoutUserEverywhereApi,
   getSession,
   type AdminUser,
   type Role,
@@ -96,6 +97,16 @@ export default function Users() {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "update failed");
+    }
+  }
+
+  async function logoutEverywhere(username: string) {
+    if (!confirm(`Log "${username}" out everywhere? Their password stays the same, but every active session/token is revoked immediately.`)) return;
+    setError(null);
+    try {
+      await logoutUserEverywhereApi(username);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "logout failed");
     }
   }
 
@@ -320,7 +331,7 @@ export default function Users() {
             <thead>
               <tr>
                 <th>
-                  <input type="checkbox" checked={selected.size > 0 && selected.size === visibleUsers.length} onChange={toggleSelectAll} style={{ width: "auto" }} />
+                  <input type="checkbox" checked={selected.size > 0 && selected.size === visibleUsers.length} onChange={toggleSelectAll} />
                 </th>
                 <th>Username</th>
                 <th>Organization</th>
@@ -333,7 +344,7 @@ export default function Users() {
               {visibleUsers.map((u) => (
                 <tr key={u.username}>
                   <td>
-                    <input type="checkbox" checked={selected.has(u.username)} onChange={() => toggleSelected(u.username)} style={{ width: "auto" }} />
+                    <input type="checkbox" checked={selected.has(u.username)} onChange={() => toggleSelected(u.username)} />
                   </td>
                   <td>{u.username}</td>
                   <td>{orgs.find((o) => o.id === u.tenant)?.name ?? u.tenant ?? "—"}</td>
@@ -362,6 +373,9 @@ export default function Users() {
                     <div className="row-actions">
                       <button className="link" onClick={() => startEditUser(u)}>
                         Edit
+                      </button>
+                      <button className="link" onClick={() => logoutEverywhere(u.username)}>
+                        Log out everywhere
                       </button>
                       <button className="danger-link" onClick={() => removeUser(u.username)}>
                         Delete

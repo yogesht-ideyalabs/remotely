@@ -13,9 +13,12 @@ import {
   findUser,
   logAudit,
   readAudit,
+  verifyAuditChain,
   listUsers,
+  users,
   createUser,
   updateUser,
+  bumpTokenVersion,
   deleteUser,
   listRoles,
   createRole,
@@ -43,6 +46,8 @@ import {
   setSiemConfig,
   getSmtpConfig,
   setSmtpConfig,
+  getSecurityPolicy,
+  setSecurityPolicy,
   getDashboardLayout,
   setDashboardLayout,
   type Role,
@@ -50,6 +55,7 @@ import {
   type ConnectionType,
   type AuditEvent,
   type SmtpConfig,
+  type SecurityPolicy,
 } from "./store.js";
 import {
   listMonitors,
@@ -65,7 +71,8 @@ import {
   type MonitorType,
 } from "./monitors.js";
 import { sendAlertEmail, sendTestEmail } from "./alertEmail.js";
-import { signToken, verifyToken, signMfaPendingToken, verifyMfaPendingToken, signDownloadToken, verifyDownloadToken } from "./auth.js";
+import { makeRateLimiter } from "./rateLimiter.js";
+import { signToken, verifyTokenLive, signMfaPendingToken, verifyMfaPendingToken, signDownloadToken, verifyDownloadToken } from "./auth.js";
 import { requireAuth, requireAdmin, requireAnyAdmin, type AuthedRequest } from "./auth.js";
 import { generateBase32Secret, verifyTotp, otpauthUrl } from "./totp.js";
 import { generateEphemeralKeyPair, issueGrant, checkGrant } from "./sshJit.js";
@@ -114,6 +121,8 @@ import {
   activeRolesEligibleForBreakGlass,
   auditEventInScope,
   isAnyAdmin,
+  rolesGrantingAccess,
+  getRolesForUser,
 } from "./rbac.js";
 import {
   agents,
@@ -169,71 +178,82 @@ app.use(cors());
 // enough for a small image, not so much it opens up a body-size DoS vector.
 app.use(express.json({ limit: "2mb" }));
 
+// Hand-rolled rather than pulling in helmet — this is just static header
+// values, no protocol surface worth a dependency for. CSP is deliberately
+// loose on script-src/style-src (the web app is a Vite SPA served
+// separately, this control plane's own responses are JSON, not HTML — the
+// header still matters for any browser navigation that ever lands here
+// directly, e.g. the OIDC callback redirect). HSTS is included but only
+// meaningful once this sits behind real TLS termination — harmless no-op
+// over plain HTTP otherwise.
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+  res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
+  next();
+});
+
+// Unauthenticated on purpose — used by orchestration (docker-compose
+// wait-for-healthy, load balancers) before any session exists to check.
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 // ---------- Login rate limiting ----------
-// Hand-rolled rather than pulling in express-rate-limit — small enough to
-// reason about directly (this project already favors that pattern, see
-// totp.ts's own RFC 6238 implementation). Keyed by IP+username so a
-// distributed attack across many IPs against one account still gets
-// throttled per-account, and one IP hammering many usernames still gets
-// throttled per-IP. Note: `req.ip` reflects the connecting socket, not a
-// real client IP, unless the reverse proxy in front of this in production
-// is configured with Express's `trust proxy` and forwards X-Forwarded-For
-// — without that, every request behind a proxy shares one IP bucket. The
-// username half of the key still limits blind-guessing against one
-// account even in that case.
-interface LoginAttemptState {
-  count: number;
-  firstAttemptAt: number;
-  lockedUntil: number | null;
-}
-const loginAttempts = new Map<string, LoginAttemptState>();
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 5;
-const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+// Keyed by IP+username so a distributed attack across many IPs against one
+// account still gets throttled per-account, and one IP hammering many
+// usernames still gets throttled per-IP. Note: `req.ip` reflects the
+// connecting socket, not a real client IP, unless the reverse proxy in
+// front of this in production is configured with Express's `trust proxy`
+// and forwards X-Forwarded-For — without that, every request behind a
+// proxy shares one IP bucket. The username half of the key still limits
+// blind-guessing against one account even in that case.
+const loginLimiter = makeRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5, lockoutMs: 15 * 60 * 1000 });
 
 function loginRateLimitKey(ip: string | undefined, username: string): string {
   return `${ip ?? "unknown"}:${username.toLowerCase()}`;
 }
 
-function checkLoginRateLimit(key: string): { allowed: boolean; retryAfterSeconds?: number } {
-  const state = loginAttempts.get(key);
-  if (!state?.lockedUntil) return { allowed: true };
-  const now = Date.now();
-  if (state.lockedUntil <= now) {
-    loginAttempts.delete(key);
-    return { allowed: true };
-  }
-  return { allowed: false, retryAfterSeconds: Math.ceil((state.lockedUntil - now) / 1000) };
+// Spam prevention, not brute-force prevention — a legitimate user can
+// still submit plenty of real requests, this just stops a compromised or
+// scripted account from flooding the approval queue.
+const accessRequestLimiter = makeRateLimiter({ windowMs: 10 * 60 * 1000, maxAttempts: 20, lockoutMs: 10 * 60 * 1000 });
+
+// SIEM/plugin test-send hits an admin-configured, but still arbitrary,
+// outbound URL — a mild SSRF-adjacent capability (see the existing
+// "operational + minor SSRF-adjacent" comment on the monitors section)
+// that shouldn't be freely hammerable even by an admin's own compromised
+// session.
+const webhookTestLimiter = makeRateLimiter({ windowMs: 5 * 60 * 1000, maxAttempts: 10, lockoutMs: 5 * 60 * 1000 });
+
+// Fires once per lockout transition (not on every subsequent blocked
+// attempt) — reuses the exact same sendAlertEmail already used for
+// uptime-monitor alerts, to the same admin-configured recipients. Users
+// have no stored email address in this app, so this is necessarily a
+// "notify the security team" signal, not a "notify the affected user" one.
+// sendAlertEmail already no-ops safely ({ok:false}, no throw) when SMTP
+// isn't configured — nothing extra to guard here.
+function notifyLockout(username: string, ip: string | undefined) {
+  sendAlertEmail(
+    `Remotely: account locked out — ${username}`,
+    `${username} was locked out after too many failed login attempts from ${ip ?? "an unknown address"}. Lockout lasts 15 minutes.`
+  ).catch(() => {});
 }
 
-function recordLoginFailure(key: string) {
-  const now = Date.now();
-  const state = loginAttempts.get(key);
-  if (!state || now - state.firstAttemptAt > LOGIN_WINDOW_MS) {
-    loginAttempts.set(key, { count: 1, firstAttemptAt: now, lockedUntil: null });
-    return;
-  }
-  state.count += 1;
-  if (state.count >= LOGIN_MAX_ATTEMPTS) {
-    state.lockedUntil = now + LOGIN_LOCKOUT_MS;
-  }
+// A real baseline, not gold-plated NIST 800-63B (no dictionary check, no
+// rotation requirement) — this is the one validation point every password
+// set anywhere in the app should route through. Previously only self-
+// service change-password checked anything at all (a bare 6-char minimum);
+// admin-create-user and admin-update-user had zero validation.
+function validatePasswordPolicy(password: unknown): string | null {
+  const pw = String(password ?? "");
+  if (pw.length < 8) return "password must be at least 8 characters";
+  if (!/[a-zA-Z]/.test(pw) || !/[0-9]/.test(pw)) return "password must contain at least one letter and one digit";
+  return null;
 }
-
-function clearLoginAttempts(key: string) {
-  loginAttempts.delete(key);
-}
-
-// Periodic sweep so this Map doesn't grow unbounded on a long-running
-// process — drops anything whose window has fully expired and isn't
-// currently locked out.
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, state] of loginAttempts) {
-    const windowExpired = now - state.firstAttemptAt > LOGIN_WINDOW_MS;
-    const lockExpired = !state.lockedUntil || state.lockedUntil <= now;
-    if (windowExpired && lockExpired) loginAttempts.delete(key);
-  }
-}, 60 * 60 * 1000).unref();
 
 // ---------- REST API: auth ----------
 
@@ -245,10 +265,22 @@ function adminFlags(roleNames: string[]) {
   };
 }
 
+// Org-wide "require MFA for admins" is a soft nag, not a hard block —
+// hard-blocking risks locking out the only admin account with no recovery
+// path. A logged-in-but-unprotected admin session is still strictly safer
+// than an admin who can no longer log in at all. The frontend surfaces
+// this flag as a banner pointing at Profile -> Security.
+function checkMfaSetupRequired(user: { username: string; roles: string[]; mfaEnabled?: boolean }): boolean {
+  if (!getSecurityPolicy().requireMfaForAdmins) return false;
+  if (!isAnyAdmin(resolveRoles(user.roles))) return false;
+  if (user.mfaEnabled) return false;
+  return listWebauthnCredentials(user.username).length === 0;
+}
+
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body ?? {};
   const rlKey = loginRateLimitKey(req.ip, username ?? "");
-  const rl = checkLoginRateLimit(rlKey);
+  const rl = loginLimiter.check(rlKey);
   if (!rl.allowed) {
     res.setHeader("Retry-After", String(rl.retryAfterSeconds));
     res.status(429).json({ error: `Too many failed login attempts. Try again in ${rl.retryAfterSeconds}s.` });
@@ -257,20 +289,21 @@ app.post("/api/login", (req, res) => {
 
   const user = findUser(username ?? "");
   if (!user || !bcrypt.compareSync(password ?? "", user.passwordHash)) {
-    recordLoginFailure(rlKey);
+    const { justLockedOut } = loginLimiter.recordFailure(rlKey);
+    if (justLockedOut) notifyLockout(username ?? "unknown", req.ip);
     logAudit(username ?? "unknown", "login_failed", null, "invalid credentials");
     res.status(401).json({ error: "invalid credentials" });
     return;
   }
-  clearLoginAttempts(rlKey);
+  loginLimiter.clear(rlKey);
   if (user.mfaEnabled && user.mfaSecret) {
     logAudit(user.username, "login_mfa_pending", null, "password ok, awaiting MFA code");
     res.json({ mfaRequired: true, mfaToken: signMfaPendingToken(user.username) });
     return;
   }
-  const token = signToken({ sub: user.username, roles: user.roles });
+  const token = signToken({ sub: user.username, roles: user.roles, tokenVersion: user.tokenVersion });
   logAudit(user.username, "login", null, `roles=${user.roles.join(",")}`);
-  res.json({ token, username: user.username, roles: user.roles, ...adminFlags(user.roles) });
+  res.json({ token, username: user.username, roles: user.roles, mfaSetupRequired: checkMfaSetupRequired(user), ...adminFlags(user.roles) });
 });
 
 app.post("/api/login/verify-mfa", (req, res) => {
@@ -286,7 +319,7 @@ app.post("/api/login/verify-mfa", (req, res) => {
   // same rate limiter, keyed the same way, so this step can't be
   // blind-guessed any more freely than the password step could.
   const rlKey = loginRateLimitKey(req.ip, user.username);
-  const rl = checkLoginRateLimit(rlKey);
+  const rl = loginLimiter.check(rlKey);
   if (!rl.allowed) {
     res.setHeader("Retry-After", String(rl.retryAfterSeconds));
     res.status(429).json({ error: `Too many failed attempts. Try again in ${rl.retryAfterSeconds}s.` });
@@ -294,15 +327,16 @@ app.post("/api/login/verify-mfa", (req, res) => {
   }
 
   if (!code || !verifyTotp(user.mfaSecret, String(code))) {
-    recordLoginFailure(rlKey);
+    const { justLockedOut } = loginLimiter.recordFailure(rlKey);
+    if (justLockedOut) notifyLockout(user.username, req.ip);
     logAudit(user.username, "login_failed", null, "invalid MFA code");
     res.status(401).json({ error: "invalid code" });
     return;
   }
-  clearLoginAttempts(rlKey);
-  const token = signToken({ sub: user.username, roles: user.roles });
+  loginLimiter.clear(rlKey);
+  const token = signToken({ sub: user.username, roles: user.roles, tokenVersion: user.tokenVersion });
   logAudit(user.username, "login", null, `roles=${user.roles.join(",")} mfa=true`);
-  res.json({ token, username: user.username, roles: user.roles, ...adminFlags(user.roles) });
+  res.json({ token, username: user.username, roles: user.roles, mfaSetupRequired: checkMfaSetupRequired(user), ...adminFlags(user.roles) });
 });
 
 // Real OIDC authorization-code + PKCE flow (see oidc.ts for what's real vs
@@ -335,7 +369,7 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
       user = createUser(username, crypto.randomUUID(), [], "");
       logAudit(username, "sso_user_provisioned", null, `via OIDC sub=${claims.sub}`);
     }
-    const token = signToken({ sub: user.username, roles: user.roles });
+    const token = signToken({ sub: user.username, roles: user.roles, tokenVersion: user.tokenVersion });
     logAudit(user.username, "login", null, `roles=${user.roles.join(",")} via=oidc`);
     const redirect = new URL("/sso-callback", WEB_APP_URL);
     redirect.searchParams.set("token", token);
@@ -348,7 +382,13 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
 });
 
 app.get("/api/me", requireAuth, (req: AuthedRequest, res) => {
-  res.json({ username: req.user!.sub, roles: req.user!.roles, ...adminFlags(req.user!.roles) });
+  const user = findUser(req.user!.sub);
+  res.json({
+    username: req.user!.sub,
+    roles: req.user!.roles,
+    mfaSetupRequired: user ? checkMfaSetupRequired(user) : false,
+    ...adminFlags(req.user!.roles),
+  });
 });
 
 // ---------- REST API: profile (self-service — avatar, password, MFA, activity) ----------
@@ -382,8 +422,9 @@ app.post("/api/profile/change-password", requireAuth, (req: AuthedRequest, res) 
     res.status(401).json({ error: "current password is incorrect" });
     return;
   }
-  if (!newPassword || String(newPassword).length < 6) {
-    res.status(400).json({ error: "new password must be at least 6 characters" });
+  const pwError = validatePasswordPolicy(newPassword);
+  if (pwError) {
+    res.status(400).json({ error: pwError });
     return;
   }
   updateUser(req.user!.sub, { password: newPassword });
@@ -486,9 +527,9 @@ app.post("/api/login/webauthn/verify", async (req, res) => {
   try {
     const { credentialId, newCounter } = await verifyAuthentication(username, req.body?.response);
     updateWebauthnCounter(username, credentialId, newCounter);
-    const token = signToken({ sub: user.username, roles: user.roles });
+    const token = signToken({ sub: user.username, roles: user.roles, tokenVersion: user.tokenVersion });
     logAudit(user.username, "login", null, `roles=${user.roles.join(",")} via=passkey`);
-    res.json({ token, username: user.username, roles: user.roles, ...adminFlags(user.roles) });
+    res.json({ token, username: user.username, roles: user.roles, mfaSetupRequired: checkMfaSetupRequired(user), ...adminFlags(user.roles) });
   } catch (err) {
     logAudit(username, "login_failed", null, `passkey auth failed: ${(err as Error).message}`);
     res.status(401).json({ error: (err as Error).message });
@@ -523,6 +564,13 @@ app.get("/api/resources", requireAuth, (req: AuthedRequest, res) => {
 const BREAK_GLASS_TTL_MINUTES = 60;
 
 app.post("/api/access-requests", requireAuth, (req: AuthedRequest, res) => {
+  const rl = accessRequestLimiter.check(req.user!.sub);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(rl.retryAfterSeconds));
+    res.status(429).json({ error: `Too many access requests submitted. Try again in ${rl.retryAfterSeconds}s.` });
+    return;
+  }
+  accessRequestLimiter.recordFailure(req.user!.sub);
   const { resourceId, login, reason, breakGlass } = req.body ?? {};
   if (!resourceId || !login || !reason) {
     res.status(400).json({ error: "resourceId, login, and reason are all required" });
@@ -666,6 +714,11 @@ app.post("/api/admin/users", requireAuth, requireAnyAdmin, (req: AuthedRequest, 
     res.status(400).json({ error: "username, password, roles[] required" });
     return;
   }
+  const pwError = validatePasswordPolicy(password);
+  if (pwError) {
+    res.status(400).json({ error: pwError });
+    return;
+  }
   if (findUser(username)) {
     res.status(409).json({ error: "user already exists" });
     return;
@@ -708,9 +761,35 @@ app.patch("/api/admin/users/:username", requireAuth, requireAnyAdmin, (req: Auth
     }
   }
   const { roles: bodyRoles, password, tenant } = req.body ?? {};
+  if (password) {
+    const pwError = validatePasswordPolicy(password);
+    if (pwError) {
+      res.status(400).json({ error: pwError });
+      return;
+    }
+  }
   const user = updateUser(req.params.username, { roles: bodyRoles, password, tenant });
   logAudit(req.user!.sub, "user_updated", null, `username=${user!.username} roles=${user!.roles.join(",")}`);
   res.json({ username: user!.username, roles: user!.roles, tenant: user!.tenant, createdAt: user!.createdAt });
+});
+
+// "Log out everywhere" — revokes every token the target user currently
+// holds (via tokenVersion bump, see verifyTokenLive) without touching
+// their password. Same tenant-scoping as the other admin user routes.
+app.post("/api/admin/users/:username/logout-everywhere", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
+  const roles = resolveRoles(req.user!.roles);
+  const target = findUser(req.params.username);
+  if (!target) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  if (!isFullAdmin(roles) && !canManageTenant(roles, target.tenant)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  bumpTokenVersion(req.params.username);
+  logAudit(req.user!.sub, "user_logged_out_everywhere", null, `username=${req.params.username}`);
+  res.status(204).end();
 });
 
 app.delete("/api/admin/users/:username", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
@@ -881,6 +960,50 @@ app.delete("/api/admin/connections/:id", requireAuth, requireAnyAdmin, (req: Aut
   deleteConnection(req.params.id);
   logAudit(req.user!.sub, "connection_deleted", req.params.id, `hostname=${existing.hostname}`);
   res.status(204).end();
+});
+
+// Who can actually reach this Connection right now, and why — powers the
+// Diagram Editor/Architecture "Access" panel once a discovered resource has
+// been linked to it (see infraRoutes.ts's link-connection endpoint; the two
+// systems have no other relationship). Every user is checked against the
+// SAME canAccessResource() the real session-authorization path uses, so
+// this can't drift from what's actually enforced; rolesGrantingAccess() is
+// informational-only on top of that (see its own doc comment in rbac.ts).
+app.get("/api/admin/connections/:id/access-summary", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
+  const connection = getConnection(req.params.id);
+  if (!connection) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  const canAccess = users
+    .map((u) => ({ user: u, roles: getRolesForUser(u) }))
+    .filter(({ roles, user }) => canAccessResource(roles, connection, user.username))
+    .map(({ user, roles }) => ({ username: user.username, viaRoles: rolesGrantingAccess(roles, connection) }));
+
+  const recentDenials = readAudit(2000)
+    .filter((e) => e.eventType === "access_denied" && e.resourceId === connection.id)
+    .slice(0, 20)
+    .map((e) => ({ username: e.username, ts: e.ts, reason: e.details }));
+
+  res.json({ connectionId: connection.id, canAccess, recentDenials });
+});
+
+// The reverse direction — every resource a given user can reach right now,
+// for the diagram's "blast radius" view (click a user, highlight what they
+// can touch). Admin-only: this deliberately lets an admin inspect *anyone's*
+// reachable set, not just their own (the existing /api/resources is
+// caller-scoped to "your own access").
+app.get("/api/admin/users/:username/reachable-resources", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
+  const user = findUser(req.params.username);
+  if (!user) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  const roles = getRolesForUser(user);
+  const resourceIds = listResources()
+    .filter((r) => canAccessResource(roles, r, user.username))
+    .map((r) => r.id);
+  res.json({ username: user.username, resourceIds });
 });
 
 // ---------- Internal: JIT SSH authorization callback ----------
@@ -1547,6 +1670,13 @@ app.get("/api/audit", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) =>
   res.json(readAudit(200).filter(auditEventInScope(roles)));
 });
 
+// Full-admin only (not requireAnyAdmin) — this walks the entire,
+// unscoped log file, not a tenant-filtered view, so a delegated admin
+// shouldn't get it even read-only.
+app.get("/api/admin/audit/verify", requireAuth, requireAdmin, (_req: AuthedRequest, res) => {
+  res.json(verifyAuditChain());
+});
+
 // Aggregated data for the admin Dashboard page — all computed from data
 // that already exists elsewhere (audit log, live resource/session maps),
 // nothing new is tracked just for this. Same scoping rule as /api/audit:
@@ -1691,6 +1821,13 @@ app.post("/api/admin/siem-config", requireAuth, requireAdmin, (req: AuthedReques
 });
 
 app.post("/api/admin/siem-config/test", requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const rl = webhookTestLimiter.check(req.user!.sub);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(rl.retryAfterSeconds));
+    res.status(429).json({ error: `Too many test sends. Try again in ${rl.retryAfterSeconds}s.` });
+    return;
+  }
+  webhookTestLimiter.recordFailure(req.user!.sub);
   const config = getSiemConfig();
   if (!config?.webhookUrl) {
     res.status(400).json({ error: "configure and save a webhook URL first" });
@@ -1768,6 +1905,42 @@ app.post("/api/admin/smtp-config/test", requireAuth, requireAdmin, async (req: A
   const result = await sendTestEmail(config);
   logAudit(req.user!.sub, "smtp_test_sent", null, result.ok ? "delivered" : `failed: ${result.error}`);
   res.json(result);
+});
+
+// ---------- Security policy (org-wide MFA + admin IP allowlist) ----------
+// Full-admin only, same as SIEM/SMTP config — this controls platform-wide
+// auth policy, not something a tenant-scoped delegated admin should touch.
+
+const CIDR_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(\/(\d{1,2}))?$/;
+function isValidCidr(entry: string): boolean {
+  const m = entry.match(CIDR_RE);
+  if (!m) return false;
+  const octets = [m[1], m[2], m[3], m[4]].map(Number);
+  if (octets.some((o) => o > 255)) return false;
+  if (m[6] !== undefined && Number(m[6]) > 32) return false;
+  return true;
+}
+
+app.get("/api/admin/security-policy", requireAuth, requireAdmin, (_req, res) => {
+  res.json(getSecurityPolicy());
+});
+
+app.post("/api/admin/security-policy", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const body = (req.body ?? {}) as Partial<SecurityPolicy>;
+  const adminIpAllowlist = Array.isArray(body.adminIpAllowlist) ? body.adminIpAllowlist.map(String).map((s) => s.trim()).filter(Boolean) : [];
+  const bad = adminIpAllowlist.find((entry) => !isValidCidr(entry));
+  if (bad) {
+    res.status(400).json({ error: `not a valid CIDR or IP: ${bad}` });
+    return;
+  }
+  const saved = setSecurityPolicy({ requireMfaForAdmins: Boolean(body.requireMfaForAdmins), adminIpAllowlist }, req.user!.sub);
+  logAudit(
+    req.user!.sub,
+    "security_policy_updated",
+    null,
+    `requireMfaForAdmins=${saved.requireMfaForAdmins} adminIpAllowlist=${saved.adminIpAllowlist.join(",") || "(none)"}`
+  );
+  res.json(saved);
 });
 
 // ---------- Uptime monitors ----------
@@ -1976,6 +2149,13 @@ app.delete("/api/admin/plugins/:id", requireAuth, requireAdmin, (req: AuthedRequ
 });
 
 app.post("/api/admin/plugins/:id/test", requireAuth, requireAdmin, async (req: AuthedRequest, res) => {
+  const rl = webhookTestLimiter.check(req.user!.sub);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(rl.retryAfterSeconds));
+    res.status(429).json({ error: `Too many test sends. Try again in ${rl.retryAfterSeconds}s.` });
+    return;
+  }
+  webhookTestLimiter.recordFailure(req.user!.sub);
   const plugin = getWebhookPlugin(req.params.id);
   if (!plugin) {
     res.status(404).json({ error: "plugin not found" });
@@ -2301,7 +2481,7 @@ sessionWss.on("connection", (browserSocket, req) => {
   const login = url.searchParams.get("login") ?? "demo";
   const clientIp = req.socket.remoteAddress ?? "";
 
-  const payload = token ? verifyToken(token) : null;
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload || !resourceId) {
     browserSocket.close(4001, "unauthorized");
     return;
@@ -2310,7 +2490,7 @@ sessionWss.on("connection", (browserSocket, req) => {
   // Live roles, not the JWT's login-time snapshot — same reasoning as
   // requireAuth in auth.ts: a role grant/revoke must take effect on the
   // very next connection attempt, not only after a fresh login.
-  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const roles = resolveRoles(payload.roles);
   const agent = agents.get(resourceId);
 
   const grantedByRequest = hasActiveGrant(payload.sub, resourceId, login);
@@ -2421,7 +2601,7 @@ rdpWss.on("connection", async (browserSocket, req) => {
   const height = url.searchParams.get("h") ?? "768";
   const clientIp = req.socket.remoteAddress ?? "";
 
-  const payload = token ? verifyToken(token) : null;
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload || !resourceId) {
     browserSocket.close(4001, "unauthorized");
     return;
@@ -2430,7 +2610,7 @@ rdpWss.on("connection", async (browserSocket, req) => {
   // Live roles, not the JWT's login-time snapshot — same reasoning as
   // requireAuth in auth.ts: a role grant/revoke must take effect on the
   // very next connection attempt, not only after a fresh login.
-  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const roles = resolveRoles(payload.roles);
   const auth = authorizeConnectionSession(roles, resourceId, "rdp", payload.sub);
   if (!auth.ok) {
     logAudit(payload.sub, "access_denied", resourceId, auth.reason);
@@ -2544,7 +2724,7 @@ sshDirectWss.on("connection", (browserSocket, req) => {
   const resourceId = url.searchParams.get("resourceId");
   const clientIp = req.socket.remoteAddress ?? "";
 
-  const payload = token ? verifyToken(token) : null;
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload || !resourceId) {
     browserSocket.close(4001, "unauthorized");
     return;
@@ -2553,7 +2733,7 @@ sshDirectWss.on("connection", (browserSocket, req) => {
   // Live roles, not the JWT's login-time snapshot — same reasoning as
   // requireAuth in auth.ts: a role grant/revoke must take effect on the
   // very next connection attempt, not only after a fresh login.
-  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const roles = resolveRoles(payload.roles);
   const auth = authorizeConnectionSession(roles, resourceId, "ssh-direct", payload.sub);
   if (!auth.ok) {
     logAudit(payload.sub, "access_denied", resourceId, auth.reason);
@@ -2690,13 +2870,13 @@ k8sWss.on("connection", async (browserSocket, req) => {
   const resourceId = url.searchParams.get("resourceId");
   const clientIp = req.socket.remoteAddress ?? "";
 
-  const payload = token ? verifyToken(token) : null;
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload || !resourceId) {
     browserSocket.close(4001, "unauthorized");
     return;
   }
 
-  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const roles = resolveRoles(payload.roles);
   const auth = authorizeConnectionSession(roles, resourceId, "kubernetes", payload.sub);
   if (!auth.ok) {
     logAudit(payload.sub, "access_denied", resourceId, auth.reason);
@@ -2851,7 +3031,7 @@ dbWss.on("connection", async (browserSocket, req) => {
   const resourceId = url.searchParams.get("resourceId");
   const clientIp = req.socket.remoteAddress ?? "";
 
-  const payload = token ? verifyToken(token) : null;
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload || !resourceId) {
     browserSocket.close(4001, "unauthorized");
     return;
@@ -2860,7 +3040,7 @@ dbWss.on("connection", async (browserSocket, req) => {
   // Live roles, not the JWT's login-time snapshot — same reasoning as
   // requireAuth in auth.ts: a role grant/revoke must take effect on the
   // very next connection attempt, not only after a fresh login.
-  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const roles = resolveRoles(payload.roles);
   const auth = authorizeConnectionSession(roles, resourceId, "database", payload.sub);
   if (!auth.ok) {
     logAudit(payload.sub, "access_denied", resourceId, auth.reason);
@@ -2986,7 +3166,7 @@ watchWss.on("connection", (browserSocket, req) => {
   const url = new URL(req.url ?? "", "http://internal");
   const token = url.searchParams.get("token");
   const sessionId = url.searchParams.get("sessionId");
-  const payload = token ? verifyToken(token) : null;
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload || !sessionId) {
     browserSocket.close(4001, "unauthorized");
     return;
@@ -2995,7 +3175,7 @@ watchWss.on("connection", (browserSocket, req) => {
   // Live roles, not the JWT's login-time snapshot — same reasoning as
   // requireAuth in auth.ts: a role grant/revoke must take effect on the
   // very next connection attempt, not only after a fresh login.
-  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const roles = resolveRoles(payload.roles);
   const isDelegated = roles.some((r) => Object.keys(r.manageLabels).length > 0);
   if (!isFullAdmin(roles) && !isDelegated) {
     browserSocket.close(4003, "admin only");
@@ -3040,13 +3220,13 @@ diagramCollabWss.on("connection", (ws, req) => {
   const url = new URL(req.url ?? "", "http://internal");
   const token = url.searchParams.get("token");
   const diagramId = url.searchParams.get("diagramId");
-  const payload = token ? verifyToken(token) : null;
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload || !diagramId) {
     ws.close(4001, "unauthorized");
     return;
   }
 
-  const roles = resolveRoles(findUser(payload.sub)?.roles ?? []);
+  const roles = resolveRoles(payload.roles);
   if (!isAnyAdmin(roles)) {
     ws.close(4003, "admin only");
     return;

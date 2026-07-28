@@ -85,6 +85,7 @@ export default function CommandPalette() {
       items.push({ key: "p-roles", label: "Roles", sublabel: "manage permissions", path: "/admin/roles", section: "Pages" });
       items.push({ key: "p-orgs", label: "Organizations", sublabel: "manage tenants", path: "/admin/organizations", section: "Pages" });
       items.push({ key: "p-siem", label: "SIEM Export", sublabel: "audit log forwarding", path: "/admin/siem", section: "Pages" });
+      items.push({ key: "p-security-policy", label: "Security Policy", sublabel: "MFA + IP allowlist", path: "/admin/security-policy", section: "Pages" });
     }
     return items;
   }, [session]);

@@ -54,6 +54,24 @@ export function canAccessResource(roles: Role[], resource: ResourceLike, usernam
   return !denied;
 }
 
+// Informational only — "which of this user's roles' allow rules match this
+// resource," for surfacing "via role X" in the access-aware diagram
+// feature. Deliberately NOT a substitute for canAccessResource: it ignores
+// deny rules entirely, so a role can show up here even if another active
+// role's deny blocks access overall. Callers that need the real yes/no
+// answer must still call canAccessResource — this only explains an
+// already-true result.
+export function rolesGrantingAccess(roles: Role[], resource: ResourceLike): string[] {
+  return activeRoles(roles)
+    .filter((role) => {
+      const typeOk = role.resourceTypes.length === 0 || role.resourceTypes.includes(resource.type);
+      if (!typeOk) return false;
+      const isWildcard = Object.keys(role.allowLabels).length === 0;
+      return isWildcard || labelPatternMatches(role.allowLabels, resource.labels);
+    })
+    .map((role) => role.name);
+}
+
 export function loginAllowed(roles: Role[], login: string): boolean {
   return activeRoles(roles).some((role) => role.logins.includes(login));
 }

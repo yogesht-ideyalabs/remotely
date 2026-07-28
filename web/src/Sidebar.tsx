@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Link } from "react-router-dom";
+import { Icon } from "./Icon";
 import { getSession, type Branding } from "./api";
 
 interface NavItem {
@@ -9,32 +10,33 @@ interface NavItem {
 }
 
 const PRIMARY_ITEMS: NavItem[] = [
-  { to: "/resources", label: "Resources", icon: "🖥️" },
-  { to: "/access-requests", label: "Access", icon: "🔑" },
+  { to: "/resources", label: "Resources", icon: "resources" },
+  { to: "/access-requests", label: "Access", icon: "key" },
 ];
 
 // Same permission gating AdminMenu.tsx used to apply as a dropdown — kept
 // identical here since this sidebar replaces it, not just relocates it.
 function buildAdminItems(session: NonNullable<ReturnType<typeof getSession>>): NavItem[] {
   const items: NavItem[] = [];
-  items.push({ to: "/dashboard", label: "Dashboard", icon: "📊" });
-  items.push({ to: "/admin/infra-map", label: "Infrastructure Map", icon: "🗺️" });
-  items.push({ to: "/admin/snapshots", label: "Snapshots", icon: "📸" });
-  items.push({ to: "/admin/architecture", label: "Architecture", icon: "🏗️" });
-  items.push({ to: "/admin/diagram-editor", label: "Diagram Editor", icon: "✏️" });
-  items.push({ to: "/active-sessions", label: "Active Sessions", icon: "📡" });
-  items.push({ to: "/audit", label: "Audit Log", icon: "📜" });
-  if (session.isAdmin) items.push({ to: "/recordings", label: "Recordings", icon: "🎥" });
-  items.push({ to: "/admin/connections", label: "Connections", icon: "🔌" });
-  items.push({ to: "/admin/agents", label: "Agent Health", icon: "💓" });
-  items.push({ to: "/admin/users", label: "Users", icon: "👥" });
+  items.push({ to: "/dashboard", label: "Dashboard", icon: "grid" });
+  items.push({ to: "/admin/infra-map", label: "Infrastructure Map", icon: "map" });
+  items.push({ to: "/admin/snapshots", label: "Snapshots", icon: "camera" });
+  items.push({ to: "/admin/architecture", label: "Architecture", icon: "layers" });
+  items.push({ to: "/admin/diagram-editor", label: "Diagram Editor", icon: "pen" });
+  items.push({ to: "/active-sessions", label: "Active Sessions", icon: "activity" });
+  items.push({ to: "/audit", label: "Audit Log", icon: "list" });
+  if (session.isAdmin) items.push({ to: "/recordings", label: "Recordings", icon: "play-circle" });
+  items.push({ to: "/admin/connections", label: "Connections", icon: "plug" });
+  items.push({ to: "/admin/agents", label: "Agent Health", icon: "bars" });
+  items.push({ to: "/admin/users", label: "Users", icon: "users" });
   if (session.isAdmin) {
-    items.push({ to: "/admin/roles", label: "Roles", icon: "🛡️" });
-    items.push({ to: "/admin/organizations", label: "Organizations", icon: "🏢" });
-    items.push({ to: "/admin/monitors", label: "Uptime Monitors", icon: "🚨" });
-    items.push({ to: "/admin/siem", label: "SIEM Export", icon: "📤" });
-    items.push({ to: "/admin/compliance", label: "Compliance", icon: "✅" });
-    items.push({ to: "/admin/plugins", label: "Plugins", icon: "🧩" });
+    items.push({ to: "/admin/roles", label: "Roles", icon: "shield" });
+    items.push({ to: "/admin/organizations", label: "Organizations", icon: "building" });
+    items.push({ to: "/admin/monitors", label: "Uptime Monitors", icon: "radar" });
+    items.push({ to: "/admin/siem", label: "SIEM Export", icon: "upload" });
+    items.push({ to: "/admin/compliance", label: "Compliance", icon: "check-shield" });
+    items.push({ to: "/admin/plugins", label: "Plugins", icon: "puzzle" });
+    items.push({ to: "/admin/security-policy", label: "Security Policy", icon: "lock" });
   }
   return items;
 }
@@ -55,45 +57,41 @@ export default function Sidebar({ branding }: { branding: Branding | null }) {
 
   return (
     <div className={`sidebar${collapsed ? " sidebar-collapsed" : ""}`}>
-      <div className="sidebar-header">
-        <Link to="/resources" className="brand">
+      <div className="sidebar-brand">
+        <Link to="/resources">
           {branding?.logoDataUri ? (
             <img src={branding.logoDataUri} alt="" style={{ width: 20, height: 20, borderRadius: 5, objectFit: "cover" }} />
           ) : (
             <span className="dot" style={branding?.brandColor ? { background: branding.brandColor, boxShadow: `0 0 8px ${branding.brandColor}` } : undefined} />
           )}
-          {!collapsed && (branding?.brandName || "Remotely")}
         </Link>
+        {!collapsed && (branding?.brandName || "Remotely")}
       </div>
 
       <nav className="sidebar-nav">
         {PRIMARY_ITEMS.map((item) => (
-          <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? "active" : "")} title={item.label}>
-            <span className="sidebar-icon">{item.icon}</span>
-            {!collapsed && <span className="sidebar-label">{item.label}</span>}
+          <NavLink key={item.to} to={item.to} className={({ isActive }) => `sidebar-item${isActive ? " active" : ""}`} title={item.label}>
+            <Icon name={item.icon} />
+            {!collapsed && item.label}
           </NavLink>
         ))}
 
         {adminItems.length > 0 && (
           <>
-            {!collapsed && <div className="sidebar-section-label">Admin</div>}
-            {collapsed && <div className="sidebar-divider" />}
+            {!collapsed && <div className="sidebar-section">Admin</div>}
             {adminItems.map((item) => (
-              <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? "active" : "")} title={item.label}>
-                <span className="sidebar-icon">{item.icon}</span>
-                {!collapsed && <span className="sidebar-label">{item.label}</span>}
+              <NavLink key={item.to} to={item.to} className={({ isActive }) => `sidebar-item${isActive ? " active" : ""}`} title={item.label}>
+                <Icon name={item.icon} />
+                {!collapsed && item.label}
               </NavLink>
             ))}
           </>
         )}
       </nav>
 
-      <button
-        className="sidebar-collapse-btn"
-        onClick={() => setCollapsed((c) => !c)}
-        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      >
-        {collapsed ? "»" : "« Collapse"}
+      <button className="sidebar-foot" onClick={() => setCollapsed((c) => !c)} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+        <Icon name="chevron-left" size={12} style={{ transform: collapsed ? "rotate(180deg)" : undefined, verticalAlign: -1 }} />
+        {!collapsed && " Collapse"}
       </button>
     </div>
   );

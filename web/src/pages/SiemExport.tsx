@@ -64,7 +64,7 @@ export default function SiemExport() {
 
       <form className="section-card" onSubmit={save} style={{ maxWidth: 560 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} style={{ width: "auto" }} />
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           Enable real-time export
         </label>
 

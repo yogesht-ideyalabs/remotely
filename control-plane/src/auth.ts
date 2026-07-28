@@ -1,7 +1,8 @@
 import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
-import { findUser } from "./store.js";
+import { findUser, getSecurityPolicy } from "./store.js";
 import { resolveRoles, isAnyAdmin } from "./rbac.js";
+import { ipInCidr } from "./cidr.js";
 
 // DEMO ONLY: a fixed secret and long-ish TTL. Real deployments issue
 // short-lived (minutes-hours) certs bound to an SSO identity, not a
@@ -12,6 +13,10 @@ const TOKEN_TTL = "8h";
 export interface TokenPayload {
   sub: string; // username
   roles: string[];
+  // Absent (undefined) is treated as 0 on both sides of the comparison in
+  // verifyTokenLive — a token signed before tokenVersion existed at all
+  // still compares correctly against a User row that also predates it.
+  tokenVersion?: number;
 }
 
 export function signToken(payload: TokenPayload): string {
@@ -24,6 +29,26 @@ export function verifyToken(token: string): TokenPayload | null {
   } catch {
     return null;
   }
+}
+
+// Wraps verifyToken with a live tokenVersion check — a token signed before
+// a revocation (password change, or an admin's "log out everywhere") has
+// a stale tokenVersion baked in and is rejected here even though its
+// signature and expiry are both still otherwise valid. Also re-reads the
+// user's live roles in the same lookup, same reasoning requireAuth always
+// used: a role grant/revoke must take effect on the very next request, not
+// only after a fresh login. Every one of this app's independent
+// token-verification call sites (requireAuth here, plus the 7 WS-session
+// upgrade handlers in index.ts) goes through this now, not raw
+// verifyToken — the same class of gap the tenth-pass fix (stale-JWT-
+// trusted-roles) closed at every one of those sites, not just requireAuth.
+export function verifyTokenLive(token: string): TokenPayload | null {
+  const payload = verifyToken(token);
+  if (!payload) return null;
+  const user = findUser(payload.sub);
+  if (!user) return null;
+  if ((payload.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) return null;
+  return { sub: payload.sub, roles: user.roles, tokenVersion: user.tokenVersion };
 }
 
 // Second-factor handoff: password checked out, but MFA is enabled on the
@@ -56,29 +81,37 @@ export interface AuthedRequest extends Request {
 export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
-  const payload = token ? verifyToken(token) : null;
+  // verifyTokenLive proves identity AND that the token hasn't been
+  // revoked since it was issued, and returns live (not login-time-
+  // snapshotted) roles in the same lookup — see its own doc comment.
+  const payload = token ? verifyTokenLive(token) : null;
   if (!payload) {
     res.status(401).json({ error: "unauthorized" });
     return;
   }
-  // The JWT proves identity, not current authorization — roles are
-  // re-read from the live user record on every request instead of trusting
-  // the snapshot baked in at login time. Otherwise a role grant/revoke
-  // (e.g. making a role break-glass eligible, then assigning it) silently
-  // doesn't take effect for anyone with an already-open session until they
-  // log out and back in, which looks exactly like "it didn't work."
-  const user = findUser(payload.sub);
-  if (!user) {
-    res.status(401).json({ error: "unauthorized" });
-    return;
-  }
-  req.user = { sub: payload.sub, roles: user.roles };
+  req.user = payload;
   next();
+}
+
+// Empty allowlist = no restriction (today's default, unchanged). A
+// non-empty list means req.ip must match at least one entry. Note: req.ip
+// is the raw socket address since this app never calls `app.set("trust
+// proxy", ...)` anywhere — correct for a direct deployment, but behind a
+// real reverse proxy every request would appear to come from the proxy's
+// address and this check would need trust-proxy configured first.
+function adminIpAllowed(req: Request): boolean {
+  const policy = getSecurityPolicy();
+  if (policy.adminIpAllowlist.length === 0) return true;
+  return policy.adminIpAllowlist.some((cidr) => ipInCidr(req.ip ?? "", cidr));
 }
 
 export function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
   if (!req.user!.roles.includes("admin")) {
     res.status(403).json({ error: "admin only" });
+    return;
+  }
+  if (!adminIpAllowed(req)) {
+    res.status(403).json({ error: "admin access is not permitted from this network" });
     return;
   }
   next();
@@ -91,6 +124,10 @@ export function requireAnyAdmin(req: AuthedRequest, res: Response, next: NextFun
   const roles = resolveRoles(req.user!.roles);
   if (!isAnyAdmin(roles)) {
     res.status(403).json({ error: "admin only" });
+    return;
+  }
+  if (!adminIpAllowed(req)) {
+    res.status(403).json({ error: "admin access is not permitted from this network" });
     return;
   }
   next();

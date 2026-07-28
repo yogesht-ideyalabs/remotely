@@ -159,10 +159,16 @@ export default function AccessRequests() {
         <div className="form-row">
           <input
             placeholder="resource id, e.g. client-a-bastion-01"
+            style={{ flex: 2, minWidth: 280 }}
             value={form.resourceId}
             onChange={(e) => setForm({ ...form, resourceId: e.target.value })}
           />
-          <input placeholder="login, e.g. demo" value={form.login} onChange={(e) => setForm({ ...form, login: e.target.value })} />
+          <input
+            placeholder="login, e.g. demo"
+            style={{ flex: 1, minWidth: 140 }}
+            value={form.login}
+            onChange={(e) => setForm({ ...form, login: e.target.value })}
+          />
         </div>
         <div className="form-row">
           <input
@@ -178,7 +184,6 @@ export default function AccessRequests() {
               type="checkbox"
               checked={form.breakGlass}
               onChange={(e) => setForm({ ...form, breakGlass: e.target.checked })}
-              style={{ width: "auto", margin: 0 }}
             />
             Break-glass (self-approve immediately — only works if one of your roles is break-glass eligible)
           </label>

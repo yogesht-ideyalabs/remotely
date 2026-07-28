@@ -41,6 +41,7 @@ import "@xyflow/react/dist/style.css";
 import { toPng, toSvg } from "html-to-image";
 import { jsPDF } from "jspdf";
 import { apiFetch, getSession } from "../api";
+import { Icon } from "../Icon";
 import { InfraNode } from "../components/diagram/InfraNode";
 import { GroupNode } from "../components/diagram/GroupNode";
 import { ShapePalette, type ShapeDefinition } from "../components/diagram/ShapePalette";
@@ -1319,7 +1320,7 @@ function DiagramEditorInner() {
               nodeColor={(n) => (n.type === "group" ? "rgba(91,140,255,0.1)" : "#1e2433")}
               maskColor="rgba(0,0,0,0.7)"
             />
-            <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#2a3040" />
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--panel-border)" />
 
             <Panel position="top-center">
               <AlignDistributeToolbar selectedCount={selectedCount} onAlign={alignSelected} onDistribute={distributeSelected} />
@@ -1329,21 +1330,21 @@ function DiagramEditorInner() {
             {showWelcome && nodes.length === 0 && (
               <Panel position="top-center">
                 <div className="welcome-panel">
-                  <h2>🗺️ Infrastructure Diagram Editor</h2>
+                  <h2><Icon name="map" size={20} /> Infrastructure Diagram Editor</h2>
                   <p>Choose how to start:</p>
                   <div className="welcome-options">
                     <button className="welcome-option" onClick={() => { setShowImportModal(true); setShowWelcome(false); }}>
-                      <span className="welcome-icon">🔍</span>
+                      <span className="welcome-icon"><Icon name="search" size={20} /></span>
                       <strong>Auto-Build from Live Infrastructure</strong>
                       <span className="welcome-desc">Pull resources from your AWS/Azure/GCP accounts and auto-generate the diagram</span>
                     </button>
                     <button className="welcome-option" onClick={() => setShowWelcome(false)}>
-                      <span className="welcome-icon">✏️</span>
+                      <span className="welcome-icon"><Icon name="pen" size={20} /></span>
                       <strong>Draw Manually</strong>
                       <span className="welcome-desc">Drag shapes from the left panel to build your architecture from scratch</span>
                     </button>
                     <button className="welcome-option" onClick={() => { setShowLoadModal(true); setShowWelcome(false); }}>
-                      <span className="welcome-icon">📂</span>
+                      <span className="welcome-icon"><Icon name="load" size={20} /></span>
                       <strong>Load Saved Diagram</strong>
                       <span className="welcome-desc">Open a previously saved diagram and continue editing</span>
                     </button>

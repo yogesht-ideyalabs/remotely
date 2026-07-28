@@ -1,0 +1,81 @@
+# One-command replacement for the manual "Docker targets" sequence in
+# README.md — brings up the 4 passive infra targets (guacd, rdp-target,
+# ssh-target, db-target) plus dex (SSO test IdP), all on the same
+# `remotely-net` network the rest of this project already assumes.
+#
+# Deliberately does NOT containerize the control plane, agents, or web UI —
+# those keep running on the host via ./start.sh, unchanged. The control
+# plane dials ssh-target/db-target via localhost+published-port and dex via
+# localhost:5556 exactly as it always has; only guacd needs container-name
+# resolution (to reach rdp-target), which docker-compose's built-in
+# per-service DNS already provides. Containerizing the app itself would
+# break that localhost-dialing assumption and is a bigger change than what
+# "one-command demo setup" actually needs — see the "why not everything" note
+# in demo-up.sh.
+#
+# `container_name:` on every service, matching the exact names the old
+# manual `docker run --name ...` commands used — start.sh checks per-
+# container whether one already exists (from either source) before ever
+# invoking `docker compose up`, and only asks compose to create the ones
+# genuinely missing, by name (`docker compose up -d --wait <name> ...`).
+# That check is what actually avoids the name/port collision, not the
+# container_name field itself — but a fixed, predictable name is also what
+# lets start.sh's own `docker exec rdp-target ...` calls work reliably
+# afterward regardless of which path created the container.
+
+services:
+  guacd:
+    image: guacamole/guacd:1.5.5
+    container_name: guacd
+    ports:
+      - "4822:4822"
+    restart: unless-stopped
+
+  rdp-target:
+    image: danielguerra/ubuntu-xrdp
+    container_name: rdp-target
+    ports:
+      - "3389:3389"
+    restart: unless-stopped
+
+  ssh-target:
+    image: linuxserver/openssh-server
+    container_name: ssh-target
+    environment:
+      PASSWORD_ACCESS: "true"
+      USER_NAME: demo
+      USER_PASSWORD: demo1234
+      SUDO_ACCESS: "true"
+    ports:
+      - "2222:2222"
+    restart: unless-stopped
+
+  db-target:
+    image: postgres:16-alpine
+    container_name: db-target
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo1234
+      POSTGRES_DB: appdb
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d appdb"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  dex:
+    image: dexidp/dex:v2.41.1
+    container_name: dex
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./control-plane/dex-config/config.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - "5556:5556"
+    restart: unless-stopped
+
+networks:
+  default:
+    name: remotely-net

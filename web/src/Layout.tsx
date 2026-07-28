@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Icon } from "./Icon";
 import { getSession, fetchBranding, type Branding } from "./api";
 import ThemeSwitcher from "./ThemeSwitcher";
 import NotificationBell from "./NotificationBell";
@@ -40,6 +41,7 @@ const PAGE_TITLES: [string, string][] = [
   ["/admin/diagram-editor", "Diagram Editor"],
   ["/admin/architecture", "Architecture"],
   ["/admin/monitors", "Uptime Monitors"],
+  ["/admin/security-policy", "Security Policy"],
 ];
 
 function useDocumentTitle(brandName: string) {
@@ -55,6 +57,8 @@ function useDocumentTitle(brandName: string) {
 export default function Layout() {
   const session = getSession();
   const [branding, setBranding] = useState<Branding | null>(null);
+  const [mfaBannerDismissed, setMfaBannerDismissed] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (session) fetchBranding().then(setBranding).catch(() => {});
@@ -70,26 +74,32 @@ export default function Layout() {
         <Sidebar branding={branding} />
         <div className="content-column">
           <div className="topbar">
-            <div className="topbar-center">
-              <button
-                className="center-search-btn"
-                onClick={() => window.dispatchEvent(new Event("remotely:open-palette"))}
-              >
-                🔍 <span className="label">Search or jump to...</span>
-                <span className="kbd-hint">⌘K</span>
-              </button>
-            </div>
-            <div className="topbar-right">
-              <div className="control-pod">
-                <OrgSwitcher />
-                <div className="divider" />
-                <ThemeSwitcher />
-                <div className="divider" />
-                <NotificationBell />
-              </div>
+            <button className="search-btn" onClick={() => window.dispatchEvent(new Event("remotely:open-palette"))}>
+              <Icon name="search" /> Search or jump to... <span className="kbd">⌘K</span>
+            </button>
+            <div className="top-controls">
+              <OrgSwitcher />
+              <ThemeSwitcher />
+              <NotificationBell />
               <ProfileMenu />
             </div>
           </div>
+          {session.mfaSetupRequired && !mfaBannerDismissed && (
+            <div className="banner banner-warning">
+              <span>
+                Your organization requires MFA for admin accounts, and yours doesn't have it set up yet. Set up
+                two-factor authentication or a passkey in Profile → Security.
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="secondary" style={{ width: "auto", padding: "4px 12px" }} onClick={() => navigate("/profile")}>
+                  Go to Profile
+                </button>
+                <button className="link" onClick={() => setMfaBannerDismissed(true)}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
           <div className="main">
             <Outlet />
           </div>

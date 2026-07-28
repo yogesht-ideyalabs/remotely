@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Icon } from "../Icon";
 import {
   fetchAgents,
   triggerAgentUpdate,
@@ -11,6 +12,9 @@ import {
 } from "../api";
 import { LabelChips } from "../components/LabelChips";
 import { FieldLabel } from "../components/FieldLabel";
+import { StatusBadge, type StatusTone } from "../components/StatusBadge";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -20,13 +24,26 @@ function formatDuration(seconds: number): string {
   return `${hours}h ${mins % 60}m`;
 }
 
-function healthDot(lastSeenSecondsAgo: number): string {
+function healthTone(lastSeenSecondsAgo: number): StatusTone {
   // Agents ping every 20s — comfortably healthy is <45s, degraded <120s,
   // beyond that the control plane just hasn't heard from it in a while
   // (or it's dead and the WS hasn't noticed yet).
-  if (lastSeenSecondsAgo < 45) return "var(--ok)";
-  if (lastSeenSecondsAgo < 120) return "#e0a325";
-  return "var(--danger)";
+  if (lastSeenSecondsAgo < 45) return "ok";
+  if (lastSeenSecondsAgo < 120) return "warn";
+  return "danger";
+}
+
+function healthLabel(lastSeenSecondsAgo: number): string {
+  if (lastSeenSecondsAgo < 45) return "healthy";
+  if (lastSeenSecondsAgo < 120) return "degraded";
+  return "unresponsive";
+}
+
+function tokenStatusTone(status: string): StatusTone {
+  if (status === "active") return "ok";
+  if (status === "expired") return "warn";
+  if (status === "revoked") return "danger";
+  return "neutral";
 }
 
 export default function AgentHealth() {
@@ -61,13 +78,16 @@ export default function AgentHealth() {
         Refreshes every 10s. Directly-dialed connections (ssh-direct/rdp/database) aren't agents and don't appear here.
       </p>
       {error && <div className="error-banner">{error}</div>}
-      {agents && agents.length === 0 && <div className="empty-state">No agents currently connected.</div>}
+      {agents === null && <Skeleton lines={4} />}
+      {agents && agents.length === 0 && (
+        <EmptyState icon="bars" message="No agents currently connected." />
+      )}
       {agents && agents.length > 0 && (
         <div className="admin-table-wrap">
           <table className="audit-table">
             <thead>
               <tr>
-                <th></th>
+                <th>Status</th>
                 <th>Hostname</th>
                 <th>Labels</th>
                 <th>Version</th>
@@ -83,15 +103,7 @@ export default function AgentHealth() {
               {agents.map((a) => (
                 <tr key={a.id}>
                   <td>
-                    <span
-                      style={{
-                        display: "inline-block",
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: healthDot(a.lastSeenSecondsAgo),
-                      }}
-                    />
+                    <StatusBadge tone={healthTone(a.lastSeenSecondsAgo)}>{healthLabel(a.lastSeenSecondsAgo)}</StatusBadge>
                   </td>
                   <td>{a.hostname}</td>
                   <td>
@@ -105,7 +117,15 @@ export default function AgentHealth() {
                       </span>
                     )}
                   </td>
-                  <td>{a.hasIdentity ? "🔑 registered" : "legacy token"}</td>
+                  <td>
+                    {a.hasIdentity ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <Icon name="key" size={12} /> registered
+                      </span>
+                    ) : (
+                      "legacy token"
+                    )}
+                  </td>
                   <td>{formatDuration(a.uptimeSeconds)}</td>
                   <td>{a.lastSeenSecondsAgo}s ago</td>
                   <td>{a.lastLatencyMs === null ? "—" : `${a.lastLatencyMs}ms`}</td>
@@ -239,7 +259,9 @@ function JoinTokensSection() {
                     {t.uses} / {t.maxUses}
                   </td>
                   <td>{new Date(t.expiresAt).toLocaleString()}</td>
-                  <td>{status}</td>
+                  <td>
+                    <StatusBadge tone={tokenStatusTone(status)}>{status}</StatusBadge>
+                  </td>
                   <td>
                     {status === "active" && (
                       <button className="danger-link" onClick={() => revoke(t.token)}>

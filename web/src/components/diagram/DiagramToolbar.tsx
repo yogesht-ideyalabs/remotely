@@ -5,6 +5,7 @@
  */
 
 import { useRef, useState } from "react";
+import { Icon } from "../../Icon";
 import { useDismiss } from "../../useDismiss";
 
 export interface SaveStatus {
@@ -46,11 +47,16 @@ interface DiagramToolbarProps {
 
 function SaveStatusPill({ status }: { status: SaveStatus }) {
   if (status.state === "saving") return <span className="save-status save-status-saving">Saving…</span>;
-  if (status.state === "saved") return <span className="save-status save-status-saved">✓ Saved</span>;
+  if (status.state === "saved")
+    return (
+      <span className="save-status save-status-saved">
+        <Icon name="check-shield" size={12} /> Saved
+      </span>
+    );
   if (status.state === "error")
     return (
       <span className="save-status save-status-error" title={status.message}>
-        ⚠ Save failed{status.message ? `: ${status.message}` : ""}
+        <Icon name="alert" size={12} /> Save failed{status.message ? `: ${status.message}` : ""}
       </span>
     );
   return null;
@@ -113,40 +119,40 @@ export function DiagramToolbar({
 
       <div className="toolbar-center">
         <button className="toolbar-btn" onClick={onSave} title="Save diagram to your Remotely account">
-          💾 Save
+          <Icon name="save" size={14} /> Save
         </button>
         <SaveStatusPill status={saveStatus} />
         <button className="toolbar-btn" onClick={onLoad} title="Open a diagram you've saved before">
-          📂 Load
+          <Icon name="load" size={14} /> Load
         </button>
         <div className="toolbar-divider" />
         <button className="toolbar-btn toolbar-btn-icon" onClick={onUndo} disabled={!canUndo} title="Undo (Ctrl+Z)">
-          ↩️
+          <Icon name="undo" size={14} />
         </button>
         <button className="toolbar-btn toolbar-btn-icon" onClick={onRedo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">
-          ↪️
+          <Icon name="redo" size={14} />
         </button>
         <div className="toolbar-divider" />
         <button className="toolbar-btn toolbar-btn-icon" onClick={onCopy} title="Copy selected (Ctrl+C)">
-          📋
+          <Icon name="copy" size={14} />
         </button>
         <button className="toolbar-btn toolbar-btn-icon" onClick={onPaste} title="Paste (Ctrl+V)">
-          📌
+          <Icon name="clipboard" size={14} />
         </button>
         <button className="toolbar-btn toolbar-btn-icon" onClick={onDuplicate} title="Duplicate selected (Ctrl+D)">
-          🧬
+          <Icon name="dup" size={14} />
         </button>
         <div className="toolbar-divider" />
         <button className="toolbar-btn toolbar-btn-icon" onClick={onImportDiscovery} title="Import from infrastructure discovery">
-          🔍
+          <Icon name="search" size={14} />
         </button>
         <button className="toolbar-btn toolbar-btn-icon" onClick={onAutoLayout} title="Automatically arrange nodes (dagre hierarchical layout)">
-          🧭
+          <Icon name="align" size={14} />
         </button>
         <div className="toolbar-divider" />
         <div className="toolbar-dropdown" ref={exportRef}>
           <button className="toolbar-btn" onClick={() => setExportOpen((o) => !o)} title="Export the diagram">
-            ⬇️ Export ▾
+            <Icon name="upload" size={14} /> Export ▾
           </button>
           {exportOpen && (
             <div className="toolbar-dropdown-panel">
@@ -174,7 +180,7 @@ export function DiagramToolbar({
           onClick={onToggleFullscreen}
           title={isFullscreen ? "Exit fullscreen" : "Maximize the canvas to fill your screen"}
         >
-          {isFullscreen ? "🡼" : "⛶"}
+          <Icon name={isFullscreen ? "minimize" : "expand"} size={14} />
         </button>
         <button
           className="toolbar-btn toolbar-btn-icon"
@@ -182,17 +188,17 @@ export function DiagramToolbar({
           disabled={shareDisabled}
           title={shareDisabled ? "Save the diagram first to share it" : "Get a read-only public link (no login required)"}
         >
-          🔗
+          <Icon name="share" size={14} />
         </button>
         <button className="toolbar-btn toolbar-btn-icon" onClick={onShowShortcuts} title="Keyboard shortcuts (?)">
-          ⌨️
+          <Icon name="keyboard" size={14} />
         </button>
         <div className="toolbar-divider" />
         <button className="toolbar-btn toolbar-btn-icon toolbar-btn-danger" onClick={onDelete} title="Delete selected">
-          🗑️
+          <Icon name="trash" size={14} />
         </button>
         <button className="toolbar-btn toolbar-btn-icon toolbar-btn-danger" onClick={onClear} title="Clear canvas">
-          ✖️
+          <Icon name="x-circle" size={14} />
         </button>
       </div>
     </div>

@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
+import { Icon } from "../Icon";
 import { fetchDashboard, fetchDashboardLayout, saveDashboardLayout, type DashboardData, type DashboardWidgetInstance, type WidgetSize } from "../api";
 import { WIDGET_CATALOG, DEFAULT_WIDGETS, newWidgetInstance, widgetMeta, type WidgetType } from "../components/dashboard/widgetCatalog";
 import { WidgetRenderer } from "../components/dashboard/WidgetRenderer";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 const SIZE_CYCLE: Record<WidgetSize, WidgetSize> = { small: "medium", medium: "large", large: "small" };
 
@@ -59,12 +62,16 @@ export default function Dashboard() {
           <h2 className="page-title">Dashboard</h2>
           <p className="page-sub">Live snapshot, computed from the same audit log and session state everything else here uses. Add, remove, reorder, and resize widgets to make it yours.</p>
         </div>
-        <button className={editing ? "primary" : "secondary"} style={{ width: "auto", flexShrink: 0 }} onClick={() => setEditing((e) => !e)}>
-          {editing ? "Done editing" : "✏️ Edit dashboard"}
+        <button className={editing ? "primary" : "secondary"} style={{ width: "auto", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => setEditing((e) => !e)}>
+          {editing ? "Done editing" : (
+            <>
+              <Icon name="pen" size={13} /> Edit dashboard
+            </>
+          )}
         </button>
       </div>
       {error && <div className="error-banner">{error}</div>}
-      {(!data || !widgets) && !error && <div className="hint">Loading...</div>}
+      {(!data || !widgets) && !error && <Skeleton lines={4} />}
 
       {editing && (
         <div style={{ marginBottom: 16 }}>
@@ -75,8 +82,12 @@ export default function Dashboard() {
       {data && widgets && (
         <div className="dashboard-grid">
           {widgets.length === 0 && (
-            <div className="empty-state" style={{ gridColumn: "1 / -1" }}>
-              No widgets on this dashboard yet. Click "Edit dashboard" to add some.
+            <div style={{ gridColumn: "1 / -1" }}>
+              <EmptyState
+                icon="grid"
+                message='No widgets on this dashboard yet. Click "Edit dashboard" to add some.'
+                action={{ label: "+ Add widget", onClick: () => { setEditing(true); setShowPicker(true); } }}
+              />
             </div>
           )}
           {widgets.map((w, i) => {

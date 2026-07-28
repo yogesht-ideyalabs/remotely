@@ -11,6 +11,10 @@ export interface Session {
   roles: string[];
   isAdmin: boolean;
   isDelegatedAdmin: boolean;
+  // True when the org-wide "require MFA for admins" policy is on, this
+  // user holds an admin role, and they have no MFA/passkey configured yet.
+  // A soft nag, not a hard block — see checkMfaSetupRequired (index.ts).
+  mfaSetupRequired?: boolean;
 }
 
 export interface MfaChallenge {
@@ -95,7 +99,7 @@ export async function sessionFromToken(token: string): Promise<Session> {
   const res = await fetch("/api/me", { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error("invalid session token");
   const me = await res.json();
-  return { token, username: me.username, roles: me.roles, isAdmin: me.isAdmin, isDelegatedAdmin: me.isDelegatedAdmin };
+  return { token, username: me.username, roles: me.roles, isAdmin: me.isAdmin, isDelegatedAdmin: me.isDelegatedAdmin, mfaSetupRequired: me.mfaSetupRequired };
 }
 
 export interface Resource {
@@ -184,6 +188,13 @@ export function deleteUserApi(username: string): Promise<null> {
   return apiFetch(`/api/admin/users/${encodeURIComponent(username)}`, { method: "DELETE" });
 }
 
+// Revokes every token this user currently holds (password unchanged) —
+// useful after a suspected compromise or when you just want to force a
+// re-login without resetting their credentials.
+export function logoutUserEverywhereApi(username: string): Promise<null> {
+  return apiFetch(`/api/admin/users/${encodeURIComponent(username)}/logout-everywhere`, { method: "POST" });
+}
+
 // ---------- admin: roles ----------
 
 export interface Role {
@@ -263,6 +274,20 @@ export function deleteConnectionApi(id: string): Promise<null> {
 
 export function assignFolderApi(folder: string, users: string[]): Promise<Connection[]> {
   return apiFetch("/api/admin/connections/assign-folder", { method: "POST", body: JSON.stringify({ folder, users }) });
+}
+
+export interface ConnectionAccessSummary {
+  connectionId: string;
+  canAccess: { username: string; viaRoles: string[] }[];
+  recentDenials: { username: string; ts: number; reason: string }[];
+}
+
+export function fetchConnectionAccessSummary(connectionId: string): Promise<ConnectionAccessSummary> {
+  return apiFetch(`/api/admin/connections/${encodeURIComponent(connectionId)}/access-summary`);
+}
+
+export function fetchUserReachableResources(username: string): Promise<{ username: string; resourceIds: string[] }> {
+  return apiFetch(`/api/admin/users/${encodeURIComponent(username)}/reachable-resources`);
 }
 
 // ---------- admin: organizations ----------
@@ -703,6 +728,34 @@ export function saveSiemConfig(changes: { enabled: boolean; webhookUrl: string; 
 
 export function testSiemConfig(): Promise<SiemDeliveryResult> {
   return apiFetch("/api/admin/siem-config/test", { method: "POST" });
+}
+
+// ---------- security policy (full-admin only) ----------
+
+export interface SecurityPolicyView {
+  requireMfaForAdmins: boolean;
+  adminIpAllowlist: string[];
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export interface AuditChainVerifyResult {
+  valid: boolean;
+  brokenAtId?: string;
+  unverifiableCount: number;
+  verifiedCount: number;
+}
+
+export function fetchSecurityPolicy(): Promise<SecurityPolicyView> {
+  return apiFetch("/api/admin/security-policy");
+}
+
+export function saveSecurityPolicy(changes: { requireMfaForAdmins: boolean; adminIpAllowlist: string[] }): Promise<SecurityPolicyView> {
+  return apiFetch("/api/admin/security-policy", { method: "POST", body: JSON.stringify(changes) });
+}
+
+export function verifyAuditChainApi(): Promise<AuditChainVerifyResult> {
+  return apiFetch("/api/admin/audit/verify");
 }
 
 // ---------- compliance report (full-admin only) ----------

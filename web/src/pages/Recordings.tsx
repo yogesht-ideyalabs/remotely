@@ -103,11 +103,11 @@ export default function Recordings() {
         </select>
         <div>
           <div className="hint">from</div>
-          <input type="date" value={after} onChange={(e) => setAfter(e.target.value)} style={{ width: "auto" }} />
+          <input type="date" value={after} onChange={(e) => setAfter(e.target.value)} />
         </div>
         <div>
           <div className="hint">to</div>
-          <input type="date" value={before} onChange={(e) => setBefore(e.target.value)} style={{ width: "auto" }} />
+          <input type="date" value={before} onChange={(e) => setBefore(e.target.value)} />
         </div>
         {(resourceFilter || userFilter || after || before) && (
           <button
@@ -146,7 +146,7 @@ export default function Recordings() {
           <thead>
             <tr>
               <th>
-                <input type="checkbox" checked={selected.size > 0 && selected.size === filtered.length} onChange={toggleSelectAll} style={{ width: "auto" }} />
+                <input type="checkbox" checked={selected.size > 0 && selected.size === filtered.length} onChange={toggleSelectAll} />
               </th>
               <th>Session</th>
               <th>Resource</th>
@@ -161,7 +161,7 @@ export default function Recordings() {
             {filtered.map((r) => (
               <tr key={r.sessionId}>
                 <td>
-                  <input type="checkbox" checked={selected.has(r.sessionId)} onChange={() => toggleSelected(r.sessionId)} style={{ width: "auto" }} />
+                  <input type="checkbox" checked={selected.has(r.sessionId)} onChange={() => toggleSelected(r.sessionId)} />
                 </td>
                 <td>{r.sessionId}</td>
                 <td>{r.resource}</td>

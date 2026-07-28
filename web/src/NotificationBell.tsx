@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { Icon } from "./Icon";
 import { fetchNotifications, clearNotifications, type NotificationEvent } from "./api";
+import { StatusBadge } from "./components/StatusBadge";
+import { toneForEventType } from "./auditCategories";
 import { useDismiss } from "./useDismiss";
 
 export default function NotificationBell() {
@@ -37,8 +40,8 @@ export default function NotificationBell() {
   return (
     <div style={{ position: "relative" }} ref={ref}>
       <button className="icon-btn" onClick={() => setOpen((o) => !o)} title="Notifications">
-        🔔
-        {items.length > 0 && <span className="notif-badge">{items.length > 9 ? "9+" : items.length}</span>}
+        <Icon name="bell" />
+        {items.length > 0 && <span className="badge-dot" />}
       </button>
       {open && (
         <div className="notif-panel">
@@ -57,7 +60,7 @@ export default function NotificationBell() {
           )}
           {items.map((n) => (
             <div className="notif-item" key={n.id}>
-              <span className={`event-badge ${n.eventType}`}>{n.eventType}</span>
+              <StatusBadge tone={toneForEventType(n.eventType)}>{n.eventType}</StatusBadge>
               <div style={{ fontSize: 12, margin: "4px 0" }}>{n.details}</div>
               <div className="hint">
                 {n.username} · {new Date(n.ts).toLocaleString()}

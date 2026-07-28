@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { fetchNotificationHistory, clearNotifications, type NotificationEvent } from "../api";
+import { toneForEventType } from "../auditCategories";
+import { StatusBadge } from "../components/StatusBadge";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 function truncateId(id: string | null | undefined): string {
   if (!id) return "—";
@@ -51,7 +55,8 @@ export default function Notifications() {
         </button>
       </div>
 
-      {events && events.length === 0 && <div className="empty-state">No notifications in the last 30 days.</div>}
+      {events === null && <Skeleton lines={5} />}
+      {events && events.length === 0 && <EmptyState message="No notifications in the last 30 days." />}
       {events && events.length > 0 && (
         <table className="audit-table">
           <thead>
@@ -70,7 +75,7 @@ export default function Notifications() {
                 <td>{new Date(n.ts).toLocaleString()}</td>
                 <td>{n.username}</td>
                 <td>
-                  <span className={`event-badge ${n.eventType}`}>{n.eventType}</span>
+                  <StatusBadge tone={toneForEventType(n.eventType)}>{n.eventType}</StatusBadge>
                 </td>
                 <td className="truncate-cell" title={n.resourceId ?? undefined}>
                   {truncateId(n.resourceId)}

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import mermaid from "mermaid";
+import { Icon } from "../Icon";
 import { apiFetch } from "../api";
 import { FieldLabel } from "../components/FieldLabel";
 import { SyncNowModal } from "../components/SyncNowModal";
@@ -195,7 +196,7 @@ export default function InfraMap() {
   return (
     <div className="page infra-map-page">
       <div className="page-header">
-        <h1>🗺️ Infrastructure Map</h1>
+        <h1><Icon name="map" size={22} /> Infrastructure Map</h1>
         <p className="subtitle">
           Auto-discovered resources across all connected accounts and agents
         </p>
@@ -241,7 +242,7 @@ export default function InfraMap() {
             <div className="breakdown-items">
               {Object.entries(summary.byProvider).map(([provider, count]) => (
                 <span key={provider} className="breakdown-chip">
-                  {providerIcon(provider)} {provider}: {count}
+                  <Icon name={providerIcon(provider)} size={12} /> {provider}: {count}
                 </span>
               ))}
             </div>
@@ -524,7 +525,7 @@ export default function InfraMap() {
               ) : (
                 <div key={acc.id} className="account-card">
                   <div className="account-info">
-                    <span className="account-icon">{providerIcon(acc.provider)}</span>
+                    <span className="account-icon"><Icon name={providerIcon(acc.provider)} size={16} /></span>
                     <div>
                       <strong>{acc.name}</strong>
                       <div className="account-meta">
@@ -651,13 +652,13 @@ function CopySourceButton({ content }: { content: string }) {
 
 function providerIcon(provider: string): string {
   const icons: Record<string, string> = {
-    aws: "☁️",
-    azure: "🔷",
-    gcp: "🟡",
-    vmware: "🖥️",
-    proxmox: "🟩",
-    "on-prem": "🏢",
-    other: "📦",
+    aws: "cloud",
+    azure: "cloud",
+    gcp: "cloud",
+    vmware: "resources",
+    proxmox: "layers",
+    "on-prem": "building",
+    other: "resources",
   };
-  return icons[provider] || "📦";
+  return icons[provider] || "resources";
 }

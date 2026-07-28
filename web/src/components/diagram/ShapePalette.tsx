@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, type ChangeEvent, type DragEvent, useMemo } from "react";
+import { Icon } from "../../Icon";
 
 export interface ShapeDefinition {
   id: string;
@@ -47,105 +48,105 @@ interface ShapeCategory {
 const SHAPE_CATEGORIES: ShapeCategory[] = [
   {
     name: "AWS",
-    icon: "☁️",
+    icon: "cloud",
     shapes: [
-      { id: "aws-ec2", label: "EC2 Instance", icon: "🖥️", provider: "aws", resourceType: "vm", color: "#f97316" },
-      { id: "aws-lambda", label: "Lambda", icon: "⚡", provider: "aws", resourceType: "lambda", color: "#eab308" },
-      { id: "aws-rds", label: "RDS Database", icon: "🗄️", provider: "aws", resourceType: "rds-instance", color: "#3b82f6" },
-      { id: "aws-s3", label: "S3 Bucket", icon: "🪣", provider: "aws", resourceType: "s3-bucket", color: "#22c55e" },
-      { id: "aws-elb", label: "Load Balancer", icon: "⚖️", provider: "aws", resourceType: "load-balancer", color: "#06b6d4" },
-      { id: "aws-vpc", label: "VPC", icon: "🌐", provider: "aws", resourceType: "vpc", color: "#5b8cff", isGroup: true },
-      { id: "aws-subnet", label: "Subnet", icon: "📡", provider: "aws", resourceType: "subnet", color: "#64748b", isGroup: true },
-      { id: "aws-igw", label: "Internet Gateway", icon: "🚪", provider: "aws", resourceType: "internet-gateway", color: "#10b981" },
-      { id: "aws-nat", label: "NAT Gateway", icon: "🔄", provider: "aws", resourceType: "nat-gateway", color: "#f59e0b" },
-      { id: "aws-sg", label: "Security Group", icon: "🛡️", provider: "aws", resourceType: "security-group", color: "#ef4444" },
-      { id: "aws-ecs", label: "ECS / Fargate", icon: "🐳", provider: "aws", resourceType: "ecs-task", color: "#8b5cf6" },
-      { id: "aws-eks", label: "EKS Cluster", icon: "☸️", provider: "aws", resourceType: "kubernetes-pod", color: "#3b82f6" },
-      { id: "aws-dynamodb", label: "DynamoDB", icon: "📋", provider: "aws", resourceType: "dynamodb-table", color: "#3b82f6" },
-      { id: "aws-elasticache", label: "ElastiCache", icon: "⚡", provider: "aws", resourceType: "elasticache", color: "#ef4444" },
-      { id: "aws-sqs", label: "SQS Queue", icon: "📬", provider: "aws", resourceType: "queue", color: "#f97316" },
-      { id: "aws-sns", label: "SNS Topic", icon: "📢", provider: "aws", resourceType: "topic", color: "#a855f7" },
-      { id: "aws-cloudfront", label: "CloudFront", icon: "🌍", provider: "aws", resourceType: "cdn", color: "#6366f1" },
-      { id: "aws-apigw", label: "API Gateway", icon: "🔗", provider: "aws", resourceType: "api-gateway", color: "#ec4899" },
-      { id: "aws-route53", label: "Route 53", icon: "🌐", provider: "aws", resourceType: "dns-zone", color: "#8b5cf6" },
+      { id: "aws-ec2", label: "EC2 Instance", icon: "resources", provider: "aws", resourceType: "vm", color: "#f97316" },
+      { id: "aws-lambda", label: "Lambda", icon: "lambda", provider: "aws", resourceType: "lambda", color: "#eab308" },
+      { id: "aws-rds", label: "RDS Database", icon: "db", provider: "aws", resourceType: "rds-instance", color: "#3b82f6" },
+      { id: "aws-s3", label: "S3 Bucket", icon: "bucket", provider: "aws", resourceType: "s3-bucket", color: "#22c55e" },
+      { id: "aws-elb", label: "Load Balancer", icon: "scale", provider: "aws", resourceType: "load-balancer", color: "#06b6d4" },
+      { id: "aws-vpc", label: "VPC", icon: "cloud", provider: "aws", resourceType: "vpc", color: "#5b8cff", isGroup: true },
+      { id: "aws-subnet", label: "Subnet", icon: "net", provider: "aws", resourceType: "subnet", color: "#64748b", isGroup: true },
+      { id: "aws-igw", label: "Internet Gateway", icon: "share", provider: "aws", resourceType: "internet-gateway", color: "#10b981" },
+      { id: "aws-nat", label: "NAT Gateway", icon: "share", provider: "aws", resourceType: "nat-gateway", color: "#f59e0b" },
+      { id: "aws-sg", label: "Security Group", icon: "shield", provider: "aws", resourceType: "security-group", color: "#ef4444" },
+      { id: "aws-ecs", label: "ECS / Fargate", icon: "layers", provider: "aws", resourceType: "ecs-task", color: "#8b5cf6" },
+      { id: "aws-eks", label: "EKS Cluster", icon: "layers", provider: "aws", resourceType: "kubernetes-pod", color: "#3b82f6" },
+      { id: "aws-dynamodb", label: "DynamoDB", icon: "db", provider: "aws", resourceType: "dynamodb-table", color: "#3b82f6" },
+      { id: "aws-elasticache", label: "ElastiCache", icon: "db", provider: "aws", resourceType: "elasticache", color: "#ef4444" },
+      { id: "aws-sqs", label: "SQS Queue", icon: "list", provider: "aws", resourceType: "queue", color: "#f97316" },
+      { id: "aws-sns", label: "SNS Topic", icon: "share", provider: "aws", resourceType: "topic", color: "#a855f7" },
+      { id: "aws-cloudfront", label: "CloudFront", icon: "cloud", provider: "aws", resourceType: "cdn", color: "#6366f1" },
+      { id: "aws-apigw", label: "API Gateway", icon: "plug", provider: "aws", resourceType: "api-gateway", color: "#ec4899" },
+      { id: "aws-route53", label: "Route 53", icon: "net", provider: "aws", resourceType: "dns-zone", color: "#8b5cf6" },
     ],
   },
   {
     name: "Azure",
-    icon: "🔷",
+    icon: "cloud",
     shapes: [
-      { id: "az-vm", label: "Virtual Machine", icon: "🖥️", provider: "azure", resourceType: "vm", color: "#0ea5e9" },
-      { id: "az-app-svc", label: "App Service", icon: "🌐", provider: "azure", resourceType: "container", color: "#0ea5e9" },
-      { id: "az-sql", label: "Azure SQL", icon: "🗄️", provider: "azure", resourceType: "rds-instance", color: "#0ea5e9" },
-      { id: "az-blob", label: "Blob Storage", icon: "🪣", provider: "azure", resourceType: "s3-bucket", color: "#0ea5e9" },
-      { id: "az-lb", label: "Load Balancer", icon: "⚖️", provider: "azure", resourceType: "load-balancer", color: "#0ea5e9" },
-      { id: "az-vnet", label: "VNet", icon: "🌐", provider: "azure", resourceType: "vpc", color: "#0ea5e9", isGroup: true },
-      { id: "az-subnet", label: "Subnet", icon: "📡", provider: "azure", resourceType: "subnet", color: "#64748b", isGroup: true },
-      { id: "az-nsg", label: "NSG", icon: "🛡️", provider: "azure", resourceType: "security-group", color: "#ef4444" },
-      { id: "az-func", label: "Azure Functions", icon: "⚡", provider: "azure", resourceType: "lambda", color: "#eab308" },
-      { id: "az-aks", label: "AKS Cluster", icon: "☸️", provider: "azure", resourceType: "kubernetes-pod", color: "#3b82f6" },
+      { id: "az-vm", label: "Virtual Machine", icon: "resources", provider: "azure", resourceType: "vm", color: "#0ea5e9" },
+      { id: "az-app-svc", label: "App Service", icon: "layers", provider: "azure", resourceType: "container", color: "#0ea5e9" },
+      { id: "az-sql", label: "Azure SQL", icon: "db", provider: "azure", resourceType: "rds-instance", color: "#0ea5e9" },
+      { id: "az-blob", label: "Blob Storage", icon: "bucket", provider: "azure", resourceType: "s3-bucket", color: "#0ea5e9" },
+      { id: "az-lb", label: "Load Balancer", icon: "scale", provider: "azure", resourceType: "load-balancer", color: "#0ea5e9" },
+      { id: "az-vnet", label: "VNet", icon: "cloud", provider: "azure", resourceType: "vpc", color: "#0ea5e9", isGroup: true },
+      { id: "az-subnet", label: "Subnet", icon: "net", provider: "azure", resourceType: "subnet", color: "#64748b", isGroup: true },
+      { id: "az-nsg", label: "NSG", icon: "shield", provider: "azure", resourceType: "security-group", color: "#ef4444" },
+      { id: "az-func", label: "Azure Functions", icon: "lambda", provider: "azure", resourceType: "lambda", color: "#eab308" },
+      { id: "az-aks", label: "AKS Cluster", icon: "layers", provider: "azure", resourceType: "kubernetes-pod", color: "#3b82f6" },
     ],
   },
   {
     name: "GCP",
-    icon: "🟡",
+    icon: "cloud",
     shapes: [
-      { id: "gcp-gce", label: "Compute Engine", icon: "🖥️", provider: "gcp", resourceType: "vm", color: "#ea4335" },
-      { id: "gcp-cloud-run", label: "Cloud Run", icon: "🐳", provider: "gcp", resourceType: "container", color: "#4285f4" },
-      { id: "gcp-sql", label: "Cloud SQL", icon: "🗄️", provider: "gcp", resourceType: "rds-instance", color: "#4285f4" },
-      { id: "gcp-gcs", label: "Cloud Storage", icon: "🪣", provider: "gcp", resourceType: "s3-bucket", color: "#34a853" },
-      { id: "gcp-lb", label: "Load Balancer", icon: "⚖️", provider: "gcp", resourceType: "load-balancer", color: "#4285f4" },
-      { id: "gcp-vpc", label: "VPC Network", icon: "🌐", provider: "gcp", resourceType: "vpc", color: "#4285f4", isGroup: true },
-      { id: "gcp-subnet", label: "Subnet", icon: "📡", provider: "gcp", resourceType: "subnet", color: "#64748b", isGroup: true },
-      { id: "gcp-func", label: "Cloud Functions", icon: "⚡", provider: "gcp", resourceType: "lambda", color: "#fbbc04" },
-      { id: "gcp-gke", label: "GKE Cluster", icon: "☸️", provider: "gcp", resourceType: "kubernetes-pod", color: "#4285f4" },
+      { id: "gcp-gce", label: "Compute Engine", icon: "resources", provider: "gcp", resourceType: "vm", color: "#ea4335" },
+      { id: "gcp-cloud-run", label: "Cloud Run", icon: "layers", provider: "gcp", resourceType: "container", color: "#4285f4" },
+      { id: "gcp-sql", label: "Cloud SQL", icon: "db", provider: "gcp", resourceType: "rds-instance", color: "#4285f4" },
+      { id: "gcp-gcs", label: "Cloud Storage", icon: "bucket", provider: "gcp", resourceType: "s3-bucket", color: "#34a853" },
+      { id: "gcp-lb", label: "Load Balancer", icon: "scale", provider: "gcp", resourceType: "load-balancer", color: "#4285f4" },
+      { id: "gcp-vpc", label: "VPC Network", icon: "cloud", provider: "gcp", resourceType: "vpc", color: "#4285f4", isGroup: true },
+      { id: "gcp-subnet", label: "Subnet", icon: "net", provider: "gcp", resourceType: "subnet", color: "#64748b", isGroup: true },
+      { id: "gcp-func", label: "Cloud Functions", icon: "lambda", provider: "gcp", resourceType: "lambda", color: "#fbbc04" },
+      { id: "gcp-gke", label: "GKE Cluster", icon: "layers", provider: "gcp", resourceType: "kubernetes-pod", color: "#4285f4" },
     ],
   },
   {
     name: "VMware",
-    icon: "🖥️",
+    icon: "resources",
     shapes: [
-      { id: "vm-esxi", label: "ESXi Host", icon: "🏗️", provider: "vmware", resourceType: "esxi-host", color: "#78be20" },
-      { id: "vm-vm", label: "Virtual Machine", icon: "🖥️", provider: "vmware", resourceType: "vm", color: "#78be20" },
-      { id: "vm-ds", label: "Datastore", icon: "💾", provider: "vmware", resourceType: "datastore", color: "#78be20" },
-      { id: "vm-vswitch", label: "vSwitch", icon: "🔀", provider: "vmware", resourceType: "vswitch", color: "#78be20" },
+      { id: "vm-esxi", label: "ESXi Host", icon: "resources", provider: "vmware", resourceType: "esxi-host", color: "#78be20" },
+      { id: "vm-vm", label: "Virtual Machine", icon: "resources", provider: "vmware", resourceType: "vm", color: "#78be20" },
+      { id: "vm-ds", label: "Datastore", icon: "db", provider: "vmware", resourceType: "datastore", color: "#78be20" },
+      { id: "vm-vswitch", label: "vSwitch", icon: "net", provider: "vmware", resourceType: "vswitch", color: "#78be20" },
     ],
   },
   {
     name: "Proxmox",
-    icon: "🟩",
+    icon: "layers",
     shapes: [
-      { id: "pve-node", label: "Proxmox Node", icon: "🏗️", provider: "proxmox", resourceType: "proxmox-node", color: "#e57000" },
-      { id: "pve-vm", label: "VM (QEMU)", icon: "🖥️", provider: "proxmox", resourceType: "proxmox-vm", color: "#e57000" },
-      { id: "pve-ct", label: "Container (LXC)", icon: "📦", provider: "proxmox", resourceType: "proxmox-container", color: "#e57000" },
+      { id: "pve-node", label: "Proxmox Node", icon: "resources", provider: "proxmox", resourceType: "proxmox-node", color: "#e57000" },
+      { id: "pve-vm", label: "VM (QEMU)", icon: "resources", provider: "proxmox", resourceType: "proxmox-vm", color: "#e57000" },
+      { id: "pve-ct", label: "Container (LXC)", icon: "layers", provider: "proxmox", resourceType: "proxmox-container", color: "#e57000" },
     ],
   },
   {
     name: "Network",
-    icon: "🌐",
+    icon: "net",
     shapes: [
-      { id: "net-router", label: "Router", icon: "📡", provider: "network", resourceType: "other", color: "#6366f1" },
-      { id: "net-switch", label: "Switch", icon: "🔀", provider: "network", resourceType: "other", color: "#6366f1" },
-      { id: "net-firewall", label: "Firewall", icon: "🧱", provider: "network", resourceType: "other", color: "#ef4444" },
-      { id: "net-vpn", label: "VPN Gateway", icon: "🔒", provider: "network", resourceType: "vpn-gateway", color: "#8b5cf6" },
-      { id: "net-dns", label: "DNS Server", icon: "🌐", provider: "network", resourceType: "dns-zone", color: "#06b6d4" },
-      { id: "net-internet", label: "Internet", icon: "🌍", provider: "network", resourceType: "other", color: "#10b981" },
+      { id: "net-router", label: "Router", icon: "net", provider: "network", resourceType: "other", color: "#6366f1" },
+      { id: "net-switch", label: "Switch", icon: "net", provider: "network", resourceType: "other", color: "#6366f1" },
+      { id: "net-firewall", label: "Firewall", icon: "shield", provider: "network", resourceType: "other", color: "#ef4444" },
+      { id: "net-vpn", label: "VPN Gateway", icon: "shield", provider: "network", resourceType: "vpn-gateway", color: "#8b5cf6" },
+      { id: "net-dns", label: "DNS Server", icon: "net", provider: "network", resourceType: "dns-zone", color: "#06b6d4" },
+      { id: "net-internet", label: "Internet", icon: "cloud", provider: "network", resourceType: "other", color: "#10b981" },
     ],
   },
   {
     name: "Generic",
-    icon: "📦",
+    icon: "grid",
     shapes: [
-      { id: "gen-server", label: "Server", icon: "🖥️", provider: "generic", resourceType: "vm", color: "#64748b" },
-      { id: "gen-database", label: "Database", icon: "🗄️", provider: "generic", resourceType: "other", color: "#3b82f6" },
-      { id: "gen-storage", label: "Storage", icon: "💾", provider: "generic", resourceType: "other", color: "#22c55e" },
-      { id: "gen-user", label: "User / Client", icon: "👤", provider: "generic", resourceType: "other", color: "#f97316" },
-      { id: "gen-service", label: "Service", icon: "⚙️", provider: "generic", resourceType: "other", color: "#8b5cf6" },
-      { id: "gen-container", label: "Container", icon: "🐳", provider: "generic", resourceType: "container", color: "#0ea5e9" },
-      { id: "gen-region", label: "Region", icon: "🗺️", provider: "generic", resourceType: "other", color: "#5b8cff", isGroup: true },
-      { id: "gen-az", label: "Availability Zone", icon: "🏢", provider: "generic", resourceType: "other", color: "#64748b", isGroup: true },
-      { id: "gen-cluster", label: "Cluster", icon: "🔲", provider: "generic", resourceType: "other", color: "#a855f7", isGroup: true },
-      { id: "gen-text", label: "Text Annotation", icon: "📝", provider: "generic", resourceType: "other", color: "#94a3b8" },
+      { id: "gen-server", label: "Server", icon: "resources", provider: "generic", resourceType: "vm", color: "#64748b" },
+      { id: "gen-database", label: "Database", icon: "db", provider: "generic", resourceType: "other", color: "#3b82f6" },
+      { id: "gen-storage", label: "Storage", icon: "bucket", provider: "generic", resourceType: "other", color: "#22c55e" },
+      { id: "gen-user", label: "User / Client", icon: "users", provider: "generic", resourceType: "other", color: "#f97316" },
+      { id: "gen-service", label: "Service", icon: "gear", provider: "generic", resourceType: "other", color: "#8b5cf6" },
+      { id: "gen-container", label: "Container", icon: "layers", provider: "generic", resourceType: "container", color: "#0ea5e9" },
+      { id: "gen-region", label: "Region", icon: "map", provider: "generic", resourceType: "other", color: "#5b8cff", isGroup: true },
+      { id: "gen-az", label: "Availability Zone", icon: "building", provider: "generic", resourceType: "other", color: "#64748b", isGroup: true },
+      { id: "gen-cluster", label: "Cluster", icon: "grid", provider: "generic", resourceType: "other", color: "#a855f7", isGroup: true },
+      { id: "gen-text", label: "Text Annotation", icon: "pen", provider: "generic", resourceType: "other", color: "#94a3b8" },
     ],
   },
 ];
@@ -183,7 +184,7 @@ export function ShapePalette() {
       const shape: ShapeDefinition = {
         id: `custom-${Date.now()}`,
         label: uploadLabel.trim() || file.name.replace(/\.[a-z]+$/i, ""),
-        icon: "🖼️",
+        icon: "copy",
         provider: "custom",
         resourceType: "other",
         color: "#8a94a8",
@@ -202,7 +203,7 @@ export function ShapePalette() {
   };
 
   const allCategories = useMemo(
-    () => (customShapes.length > 0 ? [...SHAPE_CATEGORIES, { name: "Custom", icon: "🖼️", shapes: customShapes }] : SHAPE_CATEGORIES),
+    () => (customShapes.length > 0 ? [...SHAPE_CATEGORIES, { name: "Custom", icon: "puzzle", shapes: customShapes }] : SHAPE_CATEGORIES),
     [customShapes]
   );
 
@@ -222,10 +223,6 @@ export function ShapePalette() {
 
   return (
     <div className="shape-palette">
-      <div className="palette-header">
-        <h3>Shapes</h3>
-      </div>
-
       <div className="palette-search">
         <input
           type="text"
@@ -242,7 +239,9 @@ export function ShapePalette() {
               className={`category-header ${expandedCategory === cat.name ? "expanded" : ""}`}
               onClick={() => setExpandedCategory(expandedCategory === cat.name ? "" : cat.name)}
             >
-              <span>{cat.icon} {cat.name}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon name={cat.icon} size={14} /> {cat.name}
+              </span>
               <span className="category-count">{cat.shapes.length}</span>
             </button>
 
@@ -259,7 +258,9 @@ export function ShapePalette() {
                     {shape.customImage ? (
                       <img className="shape-icon shape-icon-custom" src={shape.customImage} alt="" />
                     ) : (
-                      <span className="shape-icon">{shape.icon}</span>
+                      <span className="shape-swatch" style={{ background: shape.color }}>
+                        <Icon name={shape.icon} size={13} style={{ stroke: "#fff" }} />
+                      </span>
                     )}
                     <span className="shape-label">{shape.label}</span>
                     {shape.isGroup && <span className="shape-badge">group</span>}
@@ -272,7 +273,7 @@ export function ShapePalette() {
                           deleteCustomShape(shape.id);
                         }}
                       >
-                        ✕
+                        <Icon name="x-circle" size={11} />
                       </button>
                     )}
                   </div>
@@ -293,7 +294,7 @@ export function ShapePalette() {
           onChange={(e) => setUploadLabel(e.target.value)}
         />
         <label className="palette-upload-btn">
-          🖼️ Upload SVG/PNG
+          <Icon name="upload" size={13} /> Upload SVG/PNG
           <input type="file" accept="image/svg+xml,image/png,image/jpeg" onChange={onUploadFile} hidden />
         </label>
       </div>

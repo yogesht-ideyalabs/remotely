@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Icon } from "../Icon";
 import {
   ReactFlow,
   Controls,
@@ -24,7 +25,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { apiFetch } from "../api";
+import { apiFetch, fetchUsers, fetchConnectionAccessSummary, fetchUserReachableResources } from "../api";
 import { InfraNode } from "../components/diagram/InfraNode";
 import { GroupNode } from "../components/diagram/GroupNode";
 import { NodePropertiesPanel } from "../components/diagram/NodePropertiesPanel";
@@ -63,6 +64,20 @@ function ArchitectureInner() {
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [error, setError] = useState("");
+
+  // Access-aware diagrams + blast radius — both read off the same
+  // linkedConnectionId a node may carry (see NodePropertiesPanel.tsx's
+  // AccessSection for where that link is actually set).
+  const [usernames, setUsernames] = useState<string[]>([]);
+  const [blastRadiusUser, setBlastRadiusUser] = useState("");
+  const [reachableIds, setReachableIds] = useState<Set<string> | null>(null);
+  const [accessBadges, setAccessBadges] = useState<Map<string, { canAccessCount: number; hasRecentDenial: boolean }>>(new Map());
+
+  useEffect(() => {
+    fetchUsers()
+      .then((users) => setUsernames(users.map((u) => u.username)))
+      .catch(() => setUsernames([]));
+  }, []);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -135,12 +150,81 @@ function ArchitectureInner() {
   }, [activeStrategy, diagrams]);
 
   const activeDiagram = tabsForActiveStrategy.find((d) => d.id === activeDiagramId) ?? null;
-  const selectedNode = activeDiagram && selectedNodeId ? activeDiagram.nodes.find((n) => n.id === selectedNodeId) ?? null : null;
+
+  // Blast radius: fetch what the selected user can actually reach whenever
+  // they change (or clear the highlight entirely when nobody's selected).
+  useEffect(() => {
+    if (!blastRadiusUser) {
+      setReachableIds(null);
+      return;
+    }
+    let cancelled = false;
+    fetchUserReachableResources(blastRadiusUser)
+      .then((r) => {
+        if (!cancelled) setReachableIds(new Set(r.resourceIds));
+      })
+      .catch(() => {
+        if (!cancelled) setReachableIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [blastRadiusUser]);
+
+  // Access-aware badges: for every distinct Connection a node in the
+  // *current* diagram is linked to, fetch its access summary once. Cheap
+  // at this scale (a handful of linked nodes per diagram, not one call per
+  // node) — re-runs whenever the diagram changes or a link/unlink reloads it.
+  useEffect(() => {
+    const linkedIds = new Set(
+      (activeDiagram?.nodes ?? [])
+        .map((n) => (n.data as { linkedConnectionId?: string }).linkedConnectionId)
+        .filter((id): id is string => Boolean(id))
+    );
+    if (linkedIds.size === 0) {
+      setAccessBadges(new Map());
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      Array.from(linkedIds).map((id) =>
+        fetchConnectionAccessSummary(id)
+          .then((s) => [id, { canAccessCount: s.canAccess.length, hasRecentDenial: s.recentDenials.length > 0 }] as const)
+          .catch(() => [id, { canAccessCount: 0, hasRecentDenial: false }] as const)
+      )
+    ).then((entries) => {
+      if (!cancelled) setAccessBadges(new Map(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDiagram]);
+
+  // The nodes actually handed to React Flow — activeDiagram.nodes patched
+  // with the access badge / blast-radius reachability computed above, same
+  // per-node-flag pattern the app already uses for things like data.locked.
+  const displayNodes = useMemo(() => {
+    if (!activeDiagram) return [];
+    return activeDiagram.nodes.map((n) => {
+      if (n.type !== "infra") return n;
+      const linkedId = (n.data as { linkedConnectionId?: string }).linkedConnectionId;
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          accessBadge: linkedId ? accessBadges.get(linkedId) : undefined,
+          reachable: blastRadiusUser ? Boolean(linkedId && reachableIds?.has(linkedId)) : undefined,
+        },
+      };
+    });
+  }, [activeDiagram, accessBadges, blastRadiusUser, reachableIds]);
+
+  const selectedNode = selectedNodeId ? displayNodes.find((n) => n.id === selectedNodeId) ?? null : null;
 
   return (
     <div className="architecture-page">
       <div className="page-header">
-        <h1>🏗️ Architecture</h1>
+        <h1><Icon name="layers" size={22} /> Architecture</h1>
         <p className="subtitle">
           Live, auto-generated architecture built from every discovered resource — regenerates
           automatically whenever infrastructure syncs. Click any node for full detail.
@@ -163,6 +247,19 @@ function ArchitectureInner() {
           ))}
         </div>
         <div className="architecture-actions">
+          <select
+            value={blastRadiusUser}
+            onChange={(e) => setBlastRadiusUser(e.target.value)}
+            title="Blast radius — highlight every linked resource this user can reach"
+            style={{ width: "auto" }}
+          >
+            <option value="">Blast radius: off</option>
+            {usernames.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
+          </select>
           <button className="btn-secondary" onClick={regenerate} disabled={loading}>
             🔄 Regenerate now
           </button>
@@ -207,7 +304,7 @@ function ArchitectureInner() {
         <div className="architecture-body">
           <div className="architecture-canvas">
             <ReactFlow
-              nodes={activeDiagram.nodes}
+              nodes={displayNodes}
               edges={activeDiagram.edges}
               nodeTypes={nodeTypes}
               onNodeClick={(_, node) => setSelectedNodeId(node.id)}
@@ -233,10 +330,11 @@ function ArchitectureInner() {
           {selectedNode && (
             <NodePropertiesPanel
               node={selectedNode}
-              allNodes={activeDiagram.nodes}
+              allNodes={displayNodes}
               edges={activeDiagram.edges}
               onUpdate={() => {}}
               onClose={() => setSelectedNodeId(null)}
+              onResourceLinked={loadAll}
             />
           )}
         </div>

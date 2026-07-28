@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Icon } from "./Icon";
 import { useTheme, type Accent } from "./theme";
 import { useDismiss } from "./useDismiss";
 
@@ -23,11 +24,11 @@ export default function ThemeSwitcher() {
   return (
     <div className="theme-switcher">
       <button
-        className="mode-toggle"
+        className="icon-btn"
         title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         onClick={() => setMode(mode === "dark" ? "light" : "dark")}
       >
-        {mode === "dark" ? "☾" : "☀"}
+        <Icon name={mode === "dark" ? "moon" : "sun"} />
       </button>
       <div className="accent-picker" ref={ref}>
         <button

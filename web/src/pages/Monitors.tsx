@@ -117,7 +117,7 @@ function MonitorForm({ initial, agents, onSave, onCancel }: { initial: MonitorIn
           <FieldLabel label="Keyword">Plain text to search for in the response body.</FieldLabel>
           <input value={form.keyword ?? ""} onChange={(e) => setForm({ ...form, keyword: e.target.value })} placeholder='e.g. "status":"ok"' />
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-            <input type="checkbox" checked={form.keywordShouldExist ?? true} onChange={(e) => setForm({ ...form, keywordShouldExist: e.target.checked })} style={{ width: "auto" }} />
+            <input type="checkbox" checked={form.keywordShouldExist ?? true} onChange={(e) => setForm({ ...form, keywordShouldExist: e.target.checked })} />
             Keyword must be present (uncheck to alert if it IS found — e.g. detecting an error page)
           </label>
         </div>
@@ -164,7 +164,7 @@ function MonitorForm({ initial, agents, onSave, onCancel }: { initial: MonitorIn
       </div>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-        <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} style={{ width: "auto" }} />
+        <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
         Enabled
       </label>
 
@@ -377,7 +377,7 @@ function SmtpSettings() {
       {error && <div className="error-banner">{error}</div>}
       <form className="section-card" onSubmit={save} style={{ maxWidth: 560 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-          <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} style={{ width: "auto" }} />
+          <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
           Enable alert emails
         </label>
 
@@ -393,7 +393,7 @@ function SmtpSettings() {
         </div>
 
         <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-          <input type="checkbox" checked={form.secure} onChange={(e) => setForm({ ...form, secure: e.target.checked })} style={{ width: "auto" }} />
+          <input type="checkbox" checked={form.secure} onChange={(e) => setForm({ ...form, secure: e.target.checked })} />
           Use implicit TLS (check this for port 465, leave unchecked for 587/25)
         </label>
 

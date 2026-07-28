@@ -158,6 +158,12 @@ function resourceToNodeData(r: InfraResource): Record<string, unknown> {
     accountName: account?.name,
     tags: r.tags ?? {},
     networkInfo: r.networkInfo ?? {},
+    // The node's own React Flow id (nodeIdFor, below) is derived from the
+    // provider's externalId, NOT this InfraResource's own internal id — so
+    // the access-aware-diagram feature carries the real id separately here,
+    // since that's what /api/infra/resources/:id/link-connection needs.
+    resourceId: r.id,
+    linkedConnectionId: r.linkedConnectionId,
     ...(r.properties ?? {}),
   };
 }

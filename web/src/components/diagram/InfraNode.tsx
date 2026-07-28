@@ -32,16 +32,26 @@ interface InfraNodeData {
   color?: string;
   locked?: boolean;
   customImage?: string;
+  // Access-aware diagrams (see NodePropertiesPanel.tsx's AccessSection for
+  // where the link itself is set) — accessBadge is patched onto node data
+  // by Architecture.tsx after fetching each linked node's access summary,
+  // not stored here directly, so InfraNode itself stays presentational.
+  linkedConnectionId?: string;
+  accessBadge?: { canAccessCount: number; hasRecentDenial: boolean };
+  // Blast radius — undefined when no user is selected for inspection,
+  // true/false once one is; patched onto every node the same way.
+  reachable?: boolean;
   [key: string]: unknown;
 }
 
 export const InfraNode = memo(({ data, selected }: NodeProps) => {
   const nodeData = data as InfraNodeData;
   const accent = nodeData.color || "#5b8cff";
+  const dimmed = nodeData.reachable === false;
 
   return (
     <div
-      className={`infra-node${selected ? " infra-node-selected" : ""}${nodeData.locked ? " infra-node-locked" : ""}`}
+      className={`infra-node${selected ? " infra-node-selected" : ""}${nodeData.locked ? " infra-node-locked" : ""}${nodeData.reachable ? " infra-node-reachable" : ""}${dimmed ? " infra-node-dimmed" : ""}`}
       style={{ ["--node-accent" as string]: accent }}
     >
       <NodeResizer isVisible={selected} minWidth={140} minHeight={50} lineClassName="infra-resize-line" handleClassName="infra-resize-handle" />
@@ -72,6 +82,14 @@ export const InfraNode = memo(({ data, selected }: NodeProps) => {
         )}
       </div>
       {nodeData.locked && <span className="infra-node-lock" title="Locked">🔒</span>}
+      {nodeData.accessBadge && nodeData.accessBadge.hasRecentDenial && (
+        <span className="infra-node-badge infra-node-badge-danger" title="Recent access denial" />
+      )}
+      {nodeData.accessBadge && !nodeData.accessBadge.hasRecentDenial && (
+        <span className="infra-node-badge infra-node-badge-ok" title={`${nodeData.accessBadge.canAccessCount} user(s) can access`}>
+          {nodeData.accessBadge.canAccessCount}
+        </span>
+      )}
     </div>
   );
 });

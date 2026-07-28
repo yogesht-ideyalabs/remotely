@@ -22,6 +22,10 @@ import {
   type Resource,
   type PasskeyMeta,
 } from "../api";
+import { toneForEventType } from "../auditCategories";
+import { StatusBadge } from "../components/StatusBadge";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 type Tab = "overview" | "access" | "ssh-keys" | "security" | "activity";
 
@@ -342,7 +346,7 @@ function SshKeysTab() {
           </tbody>
         </table>
       )}
-      {keys && keys.length === 0 && !adding && <div className="empty-state">No SSH keys added yet.</div>}
+      {keys && keys.length === 0 && !adding && <EmptyState message="No SSH keys added yet." />}
     </div>
   );
 }
@@ -539,7 +543,7 @@ function PasskeysSection() {
           </tbody>
         </table>
       )}
-      {keys && keys.length === 0 && <div className="empty-state">No passkeys registered yet.</div>}
+      {keys && keys.length === 0 && <EmptyState message="No passkeys registered yet." />}
     </div>
   );
 }
@@ -571,7 +575,7 @@ function ActivityTab() {
               <tr key={e.id}>
                 <td>{new Date(e.ts).toLocaleString()}</td>
                 <td>
-                  <span className={`event-badge ${e.eventType}`}>{e.eventType}</span>
+                  <StatusBadge tone={toneForEventType(e.eventType)}>{e.eventType}</StatusBadge>
                 </td>
                 <td>{e.resourceId ?? "—"}</td>
                 <td>{e.details}</td>
@@ -580,7 +584,8 @@ function ActivityTab() {
           </tbody>
         </table>
       )}
-      {events && events.length === 0 && <div className="empty-state">No activity yet.</div>}
+      {events === null && <Skeleton lines={4} />}
+      {events && events.length === 0 && <EmptyState message="No activity yet." />}
     </div>
   );
 }

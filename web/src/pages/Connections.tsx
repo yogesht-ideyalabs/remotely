@@ -17,6 +17,8 @@ import {
 import { useOrgFilter } from "../OrgContext";
 import { LabelChips } from "../components/LabelChips";
 import { FieldLabel } from "../components/FieldLabel";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 const emptyForm = {
   id: "",
@@ -551,6 +553,14 @@ export default function Connections() {
         </div>
       )}
 
+      {groups === null && <Skeleton lines={5} />}
+      {groups && groups.length === 0 && (
+        <EmptyState
+          icon="plug"
+          message="No connections yet — add one to make it reachable immediately, no agent required."
+          action={{ label: "+ New connection", onClick: startCreate }}
+        />
+      )}
       {groups &&
         groups.map(([folder, items]) => (
           <div key={folder} className="section-card">
@@ -614,7 +624,7 @@ export default function Connections() {
                   {items.map((c) => (
                     <tr key={c.id}>
                       <td>
-                        <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelected(c.id)} style={{ width: "auto" }} />
+                        <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelected(c.id)} />
                       </td>
                       <td>{c.hostname}</td>
                       <td>

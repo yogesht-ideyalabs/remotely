@@ -19,8 +19,10 @@
  * Author: Yogesh Tiwari
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Node, Edge } from "@xyflow/react";
+import { apiFetch, fetchConnections, fetchConnectionAccessSummary, type Connection, type ConnectionAccessSummary } from "../../api";
+import { StatusBadge } from "../StatusBadge";
 
 interface NodePropertiesPanelProps {
   node: Node;
@@ -28,6 +30,13 @@ interface NodePropertiesPanelProps {
   edges: Edge[];
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void;
   onClose: () => void;
+  // Unlike every other field in this panel, linking/unlinking a Connection
+  // is a real backend mutation (control-plane persists it on the
+  // InfraResource, not the diagram's own nodes/edges) rather than a local
+  // edit that only takes effect on the next "Save" — so the parent needs
+  // to know to reload the diagram after it happens. Optional since only
+  // Architecture.tsx (live, discovery-backed) wires this up meaningfully.
+  onResourceLinked?: () => void;
 }
 
 interface SecurityGroupRule {
@@ -79,6 +88,12 @@ interface NodeData {
   networkInfo?: NetworkInfo;
   inboundRules?: SecurityGroupRule[];
   outboundRules?: SecurityGroupRule[];
+  // The underlying InfraResource's own id (distinct from node.id, which is
+  // derived from the provider's externalId — see autoDiagram.ts's
+  // nodeIdFor) — only present on discovery-sourced nodes, which is what
+  // the access-aware-diagram "link to a Connection" feature attaches to.
+  resourceId?: string;
+  linkedConnectionId?: string;
   [key: string]: unknown;
 }
 
@@ -91,7 +106,7 @@ function formatRule(rule: SecurityGroupRule): string {
 
 const APPEARANCE_PRESETS = ["#5b8cff", "#f97316", "#8b5cf6", "#22c55e", "#eab308", "#06b6d4", "#ef4444", "#64748b"];
 
-export function NodePropertiesPanel({ node, allNodes, edges, onUpdate, onClose }: NodePropertiesPanelProps) {
+export function NodePropertiesPanel({ node, allNodes, edges, onUpdate, onClose, onResourceLinked }: NodePropertiesPanelProps) {
   const data = node.data as NodeData;
   const [localData, setLocalData] = useState<NodeData>({ ...data });
 
@@ -191,6 +206,21 @@ export function NodePropertiesPanel({ node, allNodes, edges, onUpdate, onClose }
             {localData.accountName && <span>Account: {localData.accountName}</span>}
           </div>
         </div>
+
+        {/* Access-aware diagrams — links this discovered resource to a real
+            RBAC-protected Connection so real access data can be shown.
+            Infra discovery and Connections are otherwise unrelated systems
+            (see linkedConnectionId's doc comment in infraDiscovery.ts) —
+            only resources that actually came from discovery have a
+            resourceId to link against; a manually-drawn shape has nothing
+            to attach real access data to. */}
+        {localData.resourceId && (
+          <AccessSection
+            resourceId={localData.resourceId}
+            linkedConnectionId={localData.linkedConnectionId}
+            onChanged={onResourceLinked}
+          />
+        )}
 
         {/* Real connections, derived from edges actually drawn on the canvas */}
         <div className="props-section">
@@ -526,6 +556,124 @@ export function NodePropertiesPanel({ node, allNodes, edges, onUpdate, onClose }
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+function AccessSection({
+  resourceId,
+  linkedConnectionId,
+  onChanged,
+}: {
+  resourceId: string;
+  linkedConnectionId?: string;
+  onChanged?: () => void;
+}) {
+  const [connections, setConnections] = useState<Connection[] | null>(null);
+  const [summary, setSummary] = useState<ConnectionAccessSummary | null>(null);
+  const [selected, setSelected] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchConnections()
+      .then(setConnections)
+      .catch(() => setConnections([]));
+  }, []);
+
+  useEffect(() => {
+    setSummary(null);
+    if (!linkedConnectionId) return;
+    fetchConnectionAccessSummary(linkedConnectionId)
+      .then(setSummary)
+      .catch((e) => setError(e instanceof Error ? e.message : "failed to load access summary"));
+  }, [linkedConnectionId]);
+
+  async function link(connectionId: string | null) {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/infra/resources/${encodeURIComponent(resourceId)}/link-connection`, {
+        method: "PUT",
+        body: JSON.stringify({ connectionId }),
+      });
+      setSelected("");
+      onChanged?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "link failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const linkedConnection = connections?.find((c) => c.id === linkedConnectionId);
+
+  return (
+    <div className="props-section">
+      <h4>Access</h4>
+      {!linkedConnectionId && (
+        <>
+          <p className="props-empty">
+            Not linked to a Connection yet — link it to see who can actually access it. Infra discovery and
+            RBAC-protected Connections are separate systems; nothing is access-controlled here until you link one.
+          </p>
+          <div className="form-row" style={{ marginTop: 8 }}>
+            <select value={selected} onChange={(e) => setSelected(e.target.value)} disabled={!connections}>
+              <option value="">{connections ? "Select a connection..." : "Loading..."}</option>
+              {connections?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.hostname} ({c.type})
+                </option>
+              ))}
+            </select>
+            <button type="button" className="secondary" disabled={!selected || busy} onClick={() => link(selected)}>
+              {busy ? "Linking…" : "Link"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {linkedConnectionId && (
+        <>
+          <div className="props-net-row">
+            <span>Linked to</span>
+            <span>{linkedConnection?.hostname ?? linkedConnectionId}</span>
+          </div>
+          <button type="button" className="link" style={{ padding: 0, marginBottom: 8 }} disabled={busy} onClick={() => link(null)}>
+            Unlink
+          </button>
+
+          {!summary && !error && <p className="props-empty">Loading access data…</p>}
+          {error && <p className="props-empty">{error}</p>}
+          {summary && (
+            <>
+              <div className="props-rules-label">Can access ({summary.canAccess.length})</div>
+              {summary.canAccess.length === 0 && <p className="props-empty">Nobody can currently reach this resource.</p>}
+              <ul className="props-tags" style={{ marginBottom: 10 }}>
+                {summary.canAccess.map((a) => (
+                  <li key={a.username} title={a.viaRoles.length ? `via ${a.viaRoles.join(", ")}` : "direct assignment"}>
+                    <span className="props-tag-key">{a.username}</span>
+                    <span className="props-tag-value">{a.viaRoles.join(", ") || "direct"}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="props-rules-label">Recent denials</div>
+              {summary.recentDenials.length === 0 && <p className="props-empty">None in the last 30 days.</p>}
+              {summary.recentDenials.length > 0 && (
+                <ul className="props-connections">
+                  {summary.recentDenials.map((d, i) => (
+                    <li key={i}>
+                      <StatusBadge tone="danger">{d.username}</StatusBadge>
+                      <span className="props-conn-label">{new Date(d.ts).toLocaleDateString()}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }

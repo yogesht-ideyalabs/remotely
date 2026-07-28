@@ -61,6 +61,14 @@ export interface InfraResource {
   };
   discoveredAt: number;
   reportedByAgent?: string;
+  // Admin-set link to a real RBAC-protected Connection (store.ts) — this
+  // system and Connections are otherwise completely disjoint id spaces
+  // (discovered inventory vs. manually-configured access-controlled
+  // resources), so this is the only bridge between "what we found" and
+  // "what's actually access-gated." Deliberately NOT touched by
+  // upsertInfraResources' Object.assign merge below (incoming discovery
+  // data never carries this key), so a link survives every re-sync.
+  linkedConnectionId?: string;
 }
 
 export type InfraResourceType =
@@ -169,6 +177,18 @@ export function listInfraResources(filters?: {
 
 export function getInfraResource(id: string): InfraResource | undefined {
   return infraResources.find((r) => r.id === id);
+}
+
+// Sets or clears (connectionId=null) the resource's link to a real
+// Connection — see the field's own doc comment on InfraResource for why
+// this is a separate persisted field rather than something computed.
+export function linkInfraResourceToConnection(resourceId: string, connectionId: string | null): InfraResource | undefined {
+  const resource = getInfraResource(resourceId);
+  if (!resource) return undefined;
+  if (connectionId) resource.linkedConnectionId = connectionId;
+  else delete resource.linkedConnectionId;
+  saveRow("infraResources", resource.id, resource);
+  return resource;
 }
 
 /**

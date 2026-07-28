@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchAudit, type AuditEvent } from "../api";
-import { AUDIT_CATEGORIES, categoryForEventType } from "../auditCategories";
+import { AUDIT_CATEGORIES, categoryForEventType, toneForEventType } from "../auditCategories";
+import { StatusBadge } from "../components/StatusBadge";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 // Full-length UUIDs (connection/diagram/session ids) wrapped to 2-3 lines in
 // this column, making every row a different height and the whole table look
@@ -105,8 +108,9 @@ export default function Audit() {
         )}
       </div>
 
+      {events === null && <Skeleton lines={6} />}
       {filtered && filtered.length === 0 && (
-        <div className="empty-state">{events && events.length > 0 ? "No events match these filters." : "No audit events yet."}</div>
+        <EmptyState message={events && events.length > 0 ? "No events match these filters." : "No audit events yet."} />
       )}
       {filtered && filtered.length > 0 && (
         <table className="audit-table">
@@ -129,7 +133,7 @@ export default function Audit() {
                   <span className="label-chip">{categoryForEventType(e.eventType).label}</span>
                 </td>
                 <td>
-                  <span className={`event-badge ${e.eventType}`}>{e.eventType}</span>
+                  <StatusBadge tone={toneForEventType(e.eventType)}>{e.eventType}</StatusBadge>
                 </td>
                 <td className="truncate-cell" title={e.resourceId ?? undefined}>
                   {truncateId(e.resourceId)}

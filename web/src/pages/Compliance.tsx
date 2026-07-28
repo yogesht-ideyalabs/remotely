@@ -3,7 +3,7 @@ import { fetchComplianceReport, type ComplianceControl, type ComplianceReport, t
 
 const STATUS_COLORS: Record<ControlStatus, string> = {
   pass: "var(--ok)",
-  warn: "#e0a325",
+  warn: "var(--warn)",
   fail: "var(--danger)",
   info: "var(--text-dim)",
 };

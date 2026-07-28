@@ -69,6 +69,13 @@ export interface User {
   mfaEnabled?: boolean;
   mfaSecret?: string; // base32 TOTP secret; only ever sent to the client during initial setup, never again
   webauthnCredentials?: WebauthnCredentialRecord[];
+  // Bumped on any password change (self-service or admin-set) and by the
+  // admin "log out everywhere" action. A signed JWT carries the
+  // tokenVersion it was issued with; verifyTokenLive (auth.ts) rejects
+  // any token whose tokenVersion doesn't match this live value, which is
+  // how already-issued tokens get revoked without a server-side session
+  // store. Absent (undefined) is treated as 0.
+  tokenVersion?: number;
 }
 
 export interface WebauthnCredentialRecord {
@@ -329,11 +336,26 @@ export function updateUser(
   const user = findUser(username);
   if (!user) return undefined;
   if (changes.roles) user.roles = changes.roles;
-  if (changes.password) user.passwordHash = bcrypt.hashSync(changes.password, 10);
+  if (changes.password) {
+    user.passwordHash = bcrypt.hashSync(changes.password, 10);
+    // A new password invalidates every already-issued token — bump the
+    // version so verifyTokenLive (auth.ts) rejects them on next use.
+    user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+  }
   if (changes.tenant !== undefined) user.tenant = changes.tenant;
   if (changes.avatar !== undefined) user.avatar = changes.avatar ?? undefined;
   if (changes.mfaEnabled !== undefined) user.mfaEnabled = changes.mfaEnabled;
   if (changes.mfaSecret !== undefined) user.mfaSecret = changes.mfaSecret ?? undefined;
+  saveRow("users", user.username, user);
+  return user;
+}
+
+// Admin "log out everywhere" — revokes every token the target user
+// currently holds without touching their password.
+export function bumpTokenVersion(username: string): User | undefined {
+  const user = findUser(username);
+  if (!user) return undefined;
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;
   saveRow("users", user.username, user);
   return user;
 }
@@ -565,6 +587,15 @@ export interface AuditEvent {
   eventType: string;
   resourceId: string | null;
   details: string;
+  // Hash-chain fields — present only on entries logged after this feature
+  // shipped. Older entries have neither field; verifyAuditChain reports
+  // them honestly as "pre-hardening, unverifiable" rather than pretending
+  // they were always chained. hash = sha256(prevHash + payload), where
+  // payload is the entry's other fields in a fixed key order (see
+  // auditChainPayload) so it's reproducible regardless of object literal
+  // insertion order.
+  prevHash?: string;
+  hash?: string;
 }
 
 // Fired after every audit event is durably written — SIEM export
@@ -578,14 +609,95 @@ export function onAuditEvent(listener: AuditListener) {
   auditListeners.push(listener);
 }
 
+const AUDIT_CHAIN_GENESIS = "0".repeat(64);
+
+function auditChainPayload(event: Omit<AuditEvent, "prevHash" | "hash">): string {
+  return JSON.stringify({
+    id: event.id,
+    ts: event.ts,
+    username: event.username,
+    eventType: event.eventType,
+    resourceId: event.resourceId,
+    details: event.details,
+  });
+}
+
+// Seeds the in-memory chain tip from the last line on disk at startup —
+// its .hash if it's a chained (post-hardening) entry, or genesis if the
+// file is empty/missing or its last entry predates chaining.
+function seedLastAuditHash(): string {
+  if (!fs.existsSync(AUDIT_LOG_PATH)) return AUDIT_CHAIN_GENESIS;
+  const lines = fs.readFileSync(AUDIT_LOG_PATH, "utf8").split("\n").filter(Boolean);
+  if (lines.length === 0) return AUDIT_CHAIN_GENESIS;
+  try {
+    const last = JSON.parse(lines[lines.length - 1]) as AuditEvent;
+    return last.hash ?? AUDIT_CHAIN_GENESIS;
+  } catch {
+    return AUDIT_CHAIN_GENESIS;
+  }
+}
+
+let lastAuditHash = seedLastAuditHash();
+
 // Append-only file: nothing ever rewrites or deletes a line, which is the
 // property that actually matters for "tamper-evident audit log" — a real
 // deployment would still want this backed by object storage with
-// write-once/legal-hold, not a local file, but the shape is the same.
+// write-once/legal-hold, not a local file, but the shape is the same. Each
+// entry's hash also binds it to every entry before it (see
+// verifyAuditChain), so an in-place edit or deletion anywhere in the file
+// is detectable, not just an append.
 export function logAudit(username: string, eventType: string, resourceId: string | null, details: string) {
-  const event: AuditEvent = { id: crypto.randomUUID(), ts: Date.now(), username, eventType, resourceId, details };
+  const base = { id: crypto.randomUUID(), ts: Date.now(), username, eventType, resourceId, details };
+  const prevHash = lastAuditHash;
+  const hash = crypto.createHash("sha256").update(prevHash + auditChainPayload(base)).digest("hex");
+  const event: AuditEvent = { ...base, prevHash, hash };
+  lastAuditHash = hash;
   fs.appendFileSync(AUDIT_LOG_PATH, JSON.stringify(event) + "\n");
   for (const listener of auditListeners) listener(event);
+}
+
+export interface AuditChainVerifyResult {
+  valid: boolean;
+  brokenAtId?: string;
+  unverifiableCount: number;
+  verifiedCount: number;
+}
+
+// Walks the whole file from genesis and recomputes the chain — proof the
+// verify actually catches tampering, not just that it passes on clean
+// data. Entries before chaining shipped have no hash and are counted as
+// unverifiableCount rather than failing the whole chain; once a chained
+// entry has been seen, every entry after it is expected to be chained too
+// (a missing hash there is a real break, e.g. a deleted line).
+export function verifyAuditChain(): AuditChainVerifyResult {
+  if (!fs.existsSync(AUDIT_LOG_PATH)) return { valid: true, unverifiableCount: 0, verifiedCount: 0 };
+  const lines = fs.readFileSync(AUDIT_LOG_PATH, "utf8").split("\n").filter(Boolean);
+  let expectedPrev = AUDIT_CHAIN_GENESIS;
+  let unverifiableCount = 0;
+  let verifiedCount = 0;
+  let sawChained = false;
+  for (const line of lines) {
+    let event: AuditEvent;
+    try {
+      event = JSON.parse(line) as AuditEvent;
+    } catch {
+      return { valid: false, unverifiableCount, verifiedCount };
+    }
+    if (!event.hash || !event.prevHash) {
+      if (sawChained) return { valid: false, brokenAtId: event.id, unverifiableCount, verifiedCount };
+      unverifiableCount++;
+      continue;
+    }
+    sawChained = true;
+    const base = { id: event.id, ts: event.ts, username: event.username, eventType: event.eventType, resourceId: event.resourceId, details: event.details };
+    const expectedHash = crypto.createHash("sha256").update(expectedPrev + auditChainPayload(base)).digest("hex");
+    if (event.prevHash !== expectedPrev || event.hash !== expectedHash) {
+      return { valid: false, brokenAtId: event.id, unverifiableCount, verifiedCount };
+    }
+    expectedPrev = event.hash;
+    verifiedCount++;
+  }
+  return { valid: true, unverifiableCount, verifiedCount };
 }
 
 // ---------- SIEM export config (single global target, not per-org) ----------
@@ -635,6 +747,36 @@ export function setSmtpConfig(patch: Omit<SmtpConfig, "updatedAt" | "updatedBy">
   smtpConfig = { ...patch, updatedAt: Date.now(), updatedBy };
   saveRow("smtpConfig", "global", smtpConfig);
   return smtpConfig;
+}
+
+// ---------- Security policy (single global platform-wide policy) ----------
+
+export interface SecurityPolicy {
+  requireMfaForAdmins: boolean;
+  // CIDR blocks (e.g. "10.0.0.0/8", "203.0.113.4/32"); empty = no
+  // restriction, matching today's (unrestricted) behavior.
+  adminIpAllowlist: string[];
+  updatedAt: number;
+  updatedBy: string;
+}
+
+const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
+  requireMfaForAdmins: false,
+  adminIpAllowlist: [],
+  updatedAt: 0,
+  updatedBy: "",
+};
+
+let securityPolicy: SecurityPolicy = loadTable<SecurityPolicy>("securityPolicy")[0] ?? DEFAULT_SECURITY_POLICY;
+
+export function getSecurityPolicy(): SecurityPolicy {
+  return securityPolicy;
+}
+
+export function setSecurityPolicy(patch: { requireMfaForAdmins: boolean; adminIpAllowlist: string[] }, updatedBy: string): SecurityPolicy {
+  securityPolicy = { ...patch, updatedAt: Date.now(), updatedBy };
+  saveRow("securityPolicy", "global", securityPolicy);
+  return securityPolicy;
 }
 
 // ---------- Dashboard widget layout (per-user, like a personal Grafana home dashboard) ----------

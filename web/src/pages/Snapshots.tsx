@@ -9,8 +9,11 @@
  */
 
 import { useEffect, useState } from "react";
+import { Icon } from "../Icon";
 import { apiFetch } from "../api";
 import { FieldLabel } from "../components/FieldLabel";
+import { EmptyState } from "../components/EmptyState";
+import { Skeleton } from "../components/Skeleton";
 
 interface SnapshotMeta {
   id: string;
@@ -115,7 +118,7 @@ export default function Snapshots() {
   return (
     <div className="page infra-map-page">
       <div className="page-header">
-        <h1>📸 Infrastructure Snapshots</h1>
+        <h1><Icon name="camera" size={22} /> Infrastructure Snapshots</h1>
         <p className="subtitle">
           Point-in-time captures of everything discovered — take one before a big change, then diff it against
           another snapshot or live infrastructure to see exactly what was added, removed, or modified.
@@ -152,15 +155,19 @@ export default function Snapshots() {
         )}
 
         {snapshots === null ? (
-          <p className="empty-state">Loading…</p>
+          <Skeleton lines={3} />
         ) : snapshots.length === 0 ? (
-          <p className="empty-state">No snapshots yet — take one to start tracking infrastructure changes over time.</p>
+          <EmptyState
+            icon="camera"
+            message="No snapshots yet — take one to start tracking infrastructure changes over time."
+            action={{ label: "+ Take Snapshot", onClick: () => setCreating(true) }}
+          />
         ) : (
           <div className="accounts-list">
             {snapshots.map((s) => (
               <div key={s.id} className="account-card">
                 <div className="account-info">
-                  <span className="account-icon">📸</span>
+                  <span className="account-icon"><Icon name="camera" size={16} /></span>
                   <div>
                     <strong>{s.name}</strong>
                     <div className="account-meta">

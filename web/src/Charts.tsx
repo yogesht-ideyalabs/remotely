@@ -16,6 +16,7 @@ export function StackedBarChart({ data, height = 140, labelEvery = 1 }: StackedB
   return (
     <div>
       <svg viewBox={`0 0 100 ${height}`} preserveAspectRatio="none" style={{ width: "100%", height, display: "block" }}>
+        <line x1="0" y1={height - 1} x2="100" y2={height - 1} stroke="var(--panel-border)" strokeWidth={0.5} vectorEffect="non-scaling-stroke" />
         {data.map((d, i) => {
           const total = d.segments.reduce((sum, s) => sum + s.value, 0);
           let cursor = height;
@@ -32,6 +33,7 @@ export function StackedBarChart({ data, height = 140, labelEvery = 1 }: StackedB
                     width={barWidth * 0.7}
                     height={segHeight}
                     fill={s.color}
+                    rx={1}
                   >
                     <title>
                       {d.label}: {s.key}={s.value}

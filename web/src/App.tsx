@@ -30,6 +30,7 @@ import DiagramEditor from "./pages/DiagramEditor";
 import Architecture from "./pages/Architecture";
 import SharedDiagram from "./pages/SharedDiagram";
 import Monitors from "./pages/Monitors";
+import SecurityPolicy from "./pages/SecurityPolicy";
 
 export default function App() {
   return (
@@ -67,6 +68,7 @@ export default function App() {
           <Route path="/admin/diagram-editor" element={<DiagramEditor />} />
           <Route path="/admin/architecture" element={<Architecture />} />
           <Route path="/admin/monitors" element={<Monitors />} />
+          <Route path="/admin/security-policy" element={<SecurityPolicy />} />
         </Route>
       </Routes>
     </BrowserRouter>

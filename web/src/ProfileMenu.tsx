@@ -22,13 +22,12 @@ export default function ProfileMenu() {
   const initial = session.username.slice(0, 1).toUpperCase();
 
   return (
-    <div className="user-cluster" ref={ref}>
-      <button className="user-cluster-btn" onClick={() => setOpen((o) => !o)}>
+    <div className="profile-chip-wrap" ref={ref}>
+      <button className="profile-chip" onClick={() => setOpen((o) => !o)}>
         <span className="avatar">
           {avatar ? <img src={avatar} alt="" /> : initial}
         </span>
         <span className="name">{session.username}</span>
-        <span className="chev">▾</span>
       </button>
       {open && (
         <div className="popover-panel profile-menu-panel">
