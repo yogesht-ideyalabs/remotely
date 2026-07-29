@@ -1,7 +1,7 @@
 # Remotely — POC
 
 A working proof of concept of "Remotely": browser-based access to SSH, RDP,
-databases, and Kubernetes; full RBAC (allow/deny labels, resource-type
+VNC, databases, and Kubernetes; full RBAC (allow/deny labels, resource-type
 scoping, login allowlists, session TTL, source-IP CIDR); SSO (OIDC), MFA
 (TOTP + WebAuthn/passkeys), and a full security-hardening layer (rate
 limiting, account lockout, password policy, token revocation, admin IP
@@ -35,7 +35,7 @@ for exactly what's still cut and why.
                   - multiplexes ssh-agent traffic to the
                     right agent's outbound connection
                   - dials ssh-direct/database/Kubernetes itself
-                  - relays RDP sessions through guacd (guac.ts)
+                  - relays RDP/VNC sessions through guacd (guac.ts)
                   - infra discovery: direct AWS/Azure/GCP sync,
                     agent-reported Docker/Podman, auto + manual diagrams
                   - uptime monitors, SIEM export, webhook plugins,
@@ -65,9 +65,11 @@ Two SSH architectures coexist on purpose: **ssh-agent** resources dial
 Teleport model); **ssh-direct** resources are dialed *by* the control
 plane using stored host+credentials, or a real ephemeral-keypair-per-
 session JIT mechanism (`sshJit.ts`, the same model as AWS EC2 Instance
-Connect). RDP (via guacd), Database (via `pg`/`mysql2`), and Kubernetes
-(via `@kubernetes/client-node` exec) are all control-plane-dialed — all
-show up as ordinary "Connections" you add through the UI. Infrastructure
+Connect). RDP and VNC (both via guacd — `guacd` already speaks both
+protocols natively, `guac.ts`'s handshake just selects which one), Database
+(via `pg`/`mysql2`), and Kubernetes (via `@kubernetes/client-node` exec)
+are all control-plane-dialed — all show up as ordinary "Connections" you
+add through the UI. Infrastructure
 discovery is a separate pathway: either an agent reports what it finds
 (Docker/Podman) or the control plane calls cloud provider APIs directly
 (hand-rolled AWS SigV4, Azure Service Principal + ARM REST, GCP Service
@@ -100,7 +102,7 @@ Open **http://localhost:5173**:
 |---|---|---|
 | `admin` | `admin123` | Full admin — every resource, every type, every login, all admin pages (Users/Roles/Connections/Organizations/Audit/Recordings/Monitors/SIEM/Compliance/Plugins/Security Policy) |
 | `acme-admin` | `acmeadmin123` | **Delegated (tenant) admin** — manages only acme-corp's users + connections; can't see Roles/Recordings/Organizations/Monitors/SIEM/Compliance/Plugins/Security Policy, can't grant admin roles, can't touch other tenants |
-| `alice` | `alice123` | Plain user — scoped to acme-corp **SSH-agent** resources only (excludes RDP/database/ssh-direct even though the label matches, via `resourceTypes`) |
+| `alice` | `alice123` | Plain user — scoped to acme-corp **SSH-agent** resources only (excludes RDP/VNC/database/ssh-direct even though the label matches, via `resourceTypes`) |
 | `bob` | `bob1234567` | Plain user with **zero roles** — access comes entirely from direct connection/folder assignment (see below); demonstrates that path independent of RBAC labels |
 
 None of the seeded accounts have MFA enabled by default, so you can log
@@ -122,6 +124,7 @@ of them to try that flow.
 | Browser SSH (direct-dial, no agent) | Yes — real `ssh2` connection, add-and-go from the UI |
 | SSH JIT ephemeral keys | Yes — a real per-session ephemeral keypair via an `AuthorizedKeysCommand` hook (`sshJit.ts`), the same model as AWS EC2 Instance Connect/Teleport agentless mode — no long-lived credential is ever stored on the target |
 | Browser RDP viewer | Rendering **confirmed** (real `guacd` + real `xrdp` desktop, screenshotted); input (mouse/key) sends correctly per protocol but **isn't confirmed to reach the session** — see the RDP caveat below |
+| Browser VNC viewer | Yes — real `guacd` (it speaks VNC natively, same container as RDP) + a real `x11vnc`-backed desktop. **Both rendering and input confirmed live**: a captured screenshot shows the actual desktop, and a synthetic right-click sent through the session was confirmed — via the real X11 window tree inside the container, not just visually — to create a real context-menu window at the exact click coordinates. Unlike RDP, VNC input is definitively proven to reach the session, not just sent correctly |
 | Browser database console | Yes — real `pg`/`mysql2` connections, real SQL execution, real result sets, every query text audited |
 | Kubernetes access | Yes — real `kubectl exec`-equivalent via `@kubernetes/client-node`, same terminal UI as SSH |
 | File transfer (SFTP) | Yes, for `ssh-direct` connections — real directory listing/upload/download, byte-for-byte round-trip verified. Not built for `ssh-agent` resources (would need a new file-op protocol relayed through the agent's tunnel) |
@@ -203,13 +206,25 @@ test `xrdp` container — most likely an X11-input quirk in that specific
 community Docker image, not proven either way. Try a different RDP target
 before investing more time here.
 
+**VNC does not share this caveat.** Same `guacd` bridge, same wire
+protocol, but tested against a real `x11vnc`-backed target
+(`vnc-target`) and input was confirmed to actually land: a synthetic
+right-click sent through a live `/vnc-session` produced a real X11 popup
+window at the exact click coordinates (confirmed via `xwininfo -root
+-tree` inside the container, not just a visual guess), and dismissing it
+worked the same way. Whatever caused RDP's input gap is specific to that
+`xrdp` image's X11-input handling, not a limitation in this app's guacd
+integration itself.
+
 ## Docker targets
 
 `./start.sh` already brings these up automatically via `docker-compose.yml`
-(guacd, rdp-target, ssh-target, db-target, dex — all on a `remotely-net`
-network, plus the one-time RDP-password/DB-seed-table setup). This section
-is for understanding what's actually running, or bringing them up by hand
-without the rest of `start.sh`:
+(guacd, rdp-target, vnc-target, ssh-target, db-target, dex — all on a
+`remotely-net` network, plus the one-time RDP-password/DB-seed-table
+setup — vnc-target needs no equivalent post-start step, its password is
+set via a compose env var at container-creation time). This section is for
+understanding what's actually running, or bringing them up by hand without
+the rest of `start.sh`:
 
 ```bash
 docker compose up -d --wait   # everything below, in one shot
@@ -219,6 +234,8 @@ docker network create remotely-net
 docker run -d --name guacd --network remotely-net -p 4822:4822 guacamole/guacd:1.5.5
 docker run -d --name rdp-target --network remotely-net -p 3389:3389 danielguerra/ubuntu-xrdp
 docker exec rdp-target bash -c "echo 'ubuntu:demo1234' | chpasswd"
+docker run -d --name vnc-target --network remotely-net -p 5900:5900 \
+  -e VNC_PASSWORD=demo1234 -e RESOLUTION=1024x768 dorowu/ubuntu-desktop-lxde-vnc
 docker run -d --name ssh-target --network remotely-net -p 2222:2222 \
   -e PASSWORD_ACCESS=true -e USER_NAME=demo -e USER_PASSWORD=demo1234 -e SUDO_ACCESS=true \
   linuxserver/openssh-server
@@ -228,13 +245,13 @@ docker exec db-target psql -U demo -d appdb -c \
   "CREATE TABLE customers (id serial primary key, name text, plan text); INSERT INTO customers (name, plan) VALUES ('Acme Corp','enterprise'), ('Globex Inc','pro');"
 ```
 
-Note the asymmetry: `rdp-target`'s connection record uses the **container
-name** (`rdp-target:3389`) because `guacd` itself runs inside
-`remotely-net` and dials it from there. `ssh-target`/`db-target` use
-**`localhost`** + the mapped port because the control plane dials those
-directly and runs on the host, not inside Docker. This is exactly the
-agent-vs-central-relay distinction from the architecture diagram above,
-showing up in miniature.
+Note the asymmetry: `rdp-target`'s (and `vnc-target`'s) connection record
+uses the **container name** (`rdp-target:3389`, `vnc-target:5900`) because
+`guacd` itself runs inside `remotely-net` and dials both from there.
+`ssh-target`/`db-target` use **`localhost`** + the mapped port because the
+control plane dials those directly and runs on the host, not inside
+Docker. This is exactly the agent-vs-central-relay distinction from the
+architecture diagram above, showing up in miniature.
 
 ## Two questions answered along the way
 
@@ -267,7 +284,7 @@ Deliberately **not built** (each is its own multi-day-to-multi-week effort):
 
 - `node-pty`'s prebuilt `spawn-helper` binary isn't executable by default until you `chmod +x node_modules/node-pty/prebuilds/*/spawn-helper` in `agent/` after a fresh install.
 - `AGENT_JOIN_TOKEN`, `JWT_SECRET`, `SSH_JIT_INTERNAL_TOKEN`, and every Docker target's password are hardcoded dev defaults — the control plane prints a startup warning about this, but nothing enforces changing them.
-- `guacd`/`rdp-target`/`ssh-target`/`db-target` are Docker containers, not part of `start.sh`/`stop.sh` — `docker start`/`stop` them separately (or use `docker compose`).
+- `guacd`/`rdp-target`/`vnc-target`/`ssh-target`/`db-target` are Docker containers, not part of `start.sh`/`stop.sh` — `docker start`/`stop` them separately (or use `docker compose`).
 - Delegated-admin scoping on `/api/audit` filters by tenant/connection ownership; the notification bell uses a simpler "your own events only" rule for non-full-admins — intentionally less precise, it's a glanceable feed, not the compliance record.
 - The audit hash chain only covers entries written after it shipped — older entries are honestly reported as "pre-hardening, unverifiable" by `/api/admin/audit/verify` rather than falsely claimed as always having been chained.
 - The admin IP allowlist has no separate recovery path: if you set it to exclude yourself, every admin route (including the one that would let you undo it) 403s immediately — the only way back is editing the stored policy directly in `remotely.db`. This is called out deliberately, not a bug, but worth knowing before trying it live.
@@ -283,5 +300,5 @@ Deliberately **not built** (each is its own multi-day-to-multi-week effort):
   - Ops tooling: `monitors.ts`, `alertEmail.ts`, `siemExport.ts`, `pluginSystem.ts`, `webhookDelivery.ts`, `compliance.ts`
 - `agent/` — connects out to the control plane, spawns a real PTY per SSH-agent session, sends a 20s heartbeat ping, optionally reports discovered Docker/Podman resources
 - `web/` — React + Vite, 30+ pages under `web/src/pages/` (see `App.tsx` for the full route table, `Sidebar.tsx` for access gating), `guac-client.ts` (browser-side Guacamole renderer), `CommandPalette.tsx`, `NotificationBell.tsx`, `components/diagram/` (the draw.io-style editor)
-- `docker-compose.yml` — the four passive Docker targets (guacd, rdp-target, ssh-target, db-target) plus a self-hosted Dex instance for OIDC testing
+- `docker-compose.yml` — the five passive Docker targets (guacd, rdp-target, vnc-target, ssh-target, db-target) plus a self-hosted Dex instance for OIDC testing
 - `start.sh` / `stop.sh` / `demo-reset.sh` — one-command bring-up (including all demo data), teardown, and clean-slate reset

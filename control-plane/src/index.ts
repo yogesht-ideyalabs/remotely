@@ -2629,6 +2629,7 @@ rdpWss.on("connection", async (browserSocket, req) => {
   let ttlTimer: NodeJS.Timeout | undefined;
   try {
     const conn = await connectToGuacd(GUACD_HOST, GUACD_PORT, {
+      protocol: "rdp",
       hostname: target.host,
       port: String(target.port),
       username: target.username,
@@ -2709,6 +2710,137 @@ rdpWss.on("connection", async (browserSocket, req) => {
     });
   } catch (err) {
     console.error("[rdp] guacd connect failed:", err);
+    logAudit(payload.sub, "session_error", resourceId, `guacd connect failed: ${(err as Error).message}`);
+    browserSocket.close(1011, (err as Error).message.slice(0, 120));
+  }
+});
+
+// ---------- WebSocket: browser sessions (VNC, via guacd) ----------
+// Mirrors rdpWss above line-for-line — guacd already speaks VNC natively
+// (compiled with libvncclient), so this is a protocol swap at the guac.ts
+// handshake layer, not new session architecture. See guac.ts's
+// RdpConnectParams.protocol for the one real change.
+
+const vncWss = new WebSocketServer({ noServer: true });
+
+vncWss.on("connection", async (browserSocket, req) => {
+  const url = new URL(req.url ?? "", "http://internal");
+  const token = url.searchParams.get("token");
+  const resourceId = url.searchParams.get("resourceId");
+  const width = url.searchParams.get("w") ?? "1024";
+  const height = url.searchParams.get("h") ?? "768";
+  const clientIp = req.socket.remoteAddress ?? "";
+
+  const payload = token ? verifyTokenLive(token) : null;
+  if (!payload || !resourceId) {
+    browserSocket.close(4001, "unauthorized");
+    return;
+  }
+
+  // Live roles, not the JWT's login-time snapshot — same reasoning as
+  // requireAuth in auth.ts: a role grant/revoke must take effect on the
+  // very next connection attempt, not only after a fresh login.
+  const roles = resolveRoles(payload.roles);
+  const auth = authorizeConnectionSession(roles, resourceId, "vnc", payload.sub);
+  if (!auth.ok) {
+    logAudit(payload.sub, "access_denied", resourceId, auth.reason);
+    browserSocket.close(4003, auth.reason);
+    return;
+  }
+  if (!ipAllowed(roles, clientIp)) {
+    const ipReason = `source ip ${clientIp} outside role's allowed CIDRs`;
+    logAudit(payload.sub, "access_denied", resourceId, ipReason);
+    browserSocket.close(4003, ipReason);
+    return;
+  }
+  const target = auth.conn;
+
+  let guacdSocket: import("node:net").Socket | undefined;
+  let ttlTimer: NodeJS.Timeout | undefined;
+  try {
+    const conn = await connectToGuacd(GUACD_HOST, GUACD_PORT, {
+      protocol: "vnc",
+      hostname: target.host,
+      port: String(target.port),
+      username: target.username,
+      password: target.password,
+      width,
+      height,
+      dpi: "96",
+      allowClipboard: clipboardAllowed(roles),
+    });
+    guacdSocket = conn.socket;
+
+    if (browserSocket.readyState !== WebSocket.OPEN) {
+      guacdSocket.destroy();
+      return;
+    }
+
+    const sessionId = crypto.randomUUID();
+    logAudit(payload.sub, "session_start", target.id, `resource=${target.hostname} type=vnc login=${target.username} sessionId=${sessionId}`);
+    if (conn.leftover) browserSocket.send(conn.leftover);
+
+    // Recorded exactly like rdp: raw Guacamole protocol text frames, one
+    // recordingStream per session, {t, dir, data} lines. Replay.tsx feeds
+    // these straight back into a read-only GuacClient (the same renderer
+    // WatchSession.tsx uses for live co-watching) — same file format RDP
+    // uses, since both protocols speak the identical Guacamole wire
+    // format once guacd normalizes them.
+    const recordingStream = startRecording(sessionId);
+    const startedAt = Date.now();
+    const record = (dir: "i" | "o", data: string) => {
+      recordingStream.write(JSON.stringify({ t: Date.now() - startedAt, dir, data: Buffer.from(data, "utf8").toString("base64") }) + "\n");
+    };
+
+    const terminate = () => {
+      guacdSocket?.destroy();
+      if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(4008, "session terminated");
+    };
+    otherSessions.set(sessionId, {
+      id: sessionId,
+      username: payload.sub,
+      resourceId: target.id,
+      resourceHostname: target.hostname,
+      type: "vnc",
+      startedAt,
+      terminate,
+    });
+
+    const ttlMinutes = effectiveSessionTTLMinutes(roles);
+    if (ttlMinutes !== null) {
+      ttlTimer = setTimeout(() => {
+        logAudit(payload.sub, "session_ttl_expired", target.id, `ttlMinutes=${ttlMinutes} sessionId=${sessionId}`);
+        terminate();
+      }, ttlMinutes * 60_000);
+    }
+
+    guacdSocket.on("data", (chunk) => {
+      const text = chunk.toString("utf8");
+      if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(text);
+      broadcastToSpectators(sessionId, text);
+      record("o", text);
+    });
+    guacdSocket.on("close", () => {
+      if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close();
+    });
+    guacdSocket.on("error", () => {
+      if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(1011, "guacd connection error");
+    });
+
+    browserSocket.on("message", (data) => {
+      const text = data.toString("utf8");
+      guacdSocket?.write(text);
+      record("i", text);
+    });
+    browserSocket.on("close", () => {
+      if (ttlTimer) clearTimeout(ttlTimer);
+      recordingStream.end();
+      guacdSocket?.destroy();
+      otherSessions.delete(sessionId);
+      logAudit(payload.sub, "session_end", target.id, `resource=${target.hostname} type=vnc sessionId=${sessionId}`);
+    });
+  } catch (err) {
+    console.error("[vnc] guacd connect failed:", err);
     logAudit(payload.sub, "session_error", resourceId, `guacd connect failed: ${(err as Error).message}`);
     browserSocket.close(1011, (err as Error).message.slice(0, 120));
   }
@@ -3256,6 +3388,8 @@ server.on("upgrade", (req, socket, head) => {
     sessionWss.handleUpgrade(req, socket, head, (ws) => sessionWss.emit("connection", ws, req));
   } else if (pathname === "/rdp-session") {
     rdpWss.handleUpgrade(req, socket, head, (ws) => rdpWss.emit("connection", ws, req));
+  } else if (pathname === "/vnc-session") {
+    vncWss.handleUpgrade(req, socket, head, (ws) => vncWss.emit("connection", ws, req));
   } else if (pathname === "/ssh-direct-session") {
     sshDirectWss.handleUpgrade(req, socket, head, (ws) => sshDirectWss.emit("connection", ws, req));
   } else if (pathname === "/db-session") {

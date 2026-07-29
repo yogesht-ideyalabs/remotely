@@ -198,8 +198,9 @@ export default function Roles() {
           <div className="form-row">
             <div>
               <FieldLabel label="Resource types">
-                Comma-separated: <b>ssh-agent, ssh-direct, rdp, database</b>. Restricts which kinds of resource this
-                role can reach at all, on top of the Allow/Deny label rules above. Leave empty to allow every type.
+                Comma-separated: <b>ssh-agent, ssh-direct, rdp, vnc, database, kubernetes</b>. Restricts which kinds
+                of resource this role can reach at all, on top of the Allow/Deny label rules above. Leave empty to
+                allow every type.
               </FieldLabel>
               <input value={form.resourceTypes} onChange={(e) => setForm({ ...form, resourceTypes: e.target.value })} />
             </div>

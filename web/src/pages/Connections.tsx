@@ -256,7 +256,7 @@ export default function Connections() {
     }
   }
 
-  const defaultPorts: Record<ConnectionType, string> = { "ssh-direct": "22", rdp: "3389", database: "5432", kubernetes: "" };
+  const defaultPorts: Record<ConnectionType, string> = { "ssh-direct": "22", rdp: "3389", vnc: "5900", database: "5432", kubernetes: "" };
 
   return (
     <div>
@@ -297,6 +297,7 @@ export default function Connections() {
               >
                 <option value="ssh-direct">SSH (direct)</option>
                 <option value="rdp">RDP</option>
+                <option value="vnc">VNC</option>
                 <option value="database">Database (PostgreSQL / MySQL)</option>
                 <option value="kubernetes">Kubernetes (pod exec)</option>
               </select>
@@ -335,8 +336,8 @@ export default function Connections() {
               </div>
               <div>
                 <FieldLabel label="Port">
-                  Defaults to the standard port for the selected type (22 for SSH, 3389 for RDP, 5432 for Postgres) —
-                  only change it if the target listens somewhere non-standard.
+                  Defaults to the standard port for the selected type (22 for SSH, 3389 for RDP, 5900 for VNC, 5432
+                  for Postgres) — only change it if the target listens somewhere non-standard.
                 </FieldLabel>
                 <input placeholder="port" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} />
               </div>

@@ -7,6 +7,7 @@ import { Skeleton } from "../components/Skeleton";
 
 function connectPath(r: Resource): string {
   if (r.type === "rdp") return `/rdp/${r.id}`;
+  if (r.type === "vnc") return `/vnc/${r.id}`;
   if (r.type === "database") return `/db/${r.id}`;
   return `/terminal/${r.id}?kind=${r.type}`;
 }

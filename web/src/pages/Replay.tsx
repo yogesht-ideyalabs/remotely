@@ -66,9 +66,11 @@ export default function Replay() {
         </span>
       </div>
       {error && <div className="error-banner">{error}</div>}
-      {frames && type === "rdp" && <RdpReplay frames={frames} playing={playing} setPlaying={setPlaying} />}
+      {frames && (type === "rdp" || type === "vnc") && <RdpReplay frames={frames} playing={playing} setPlaying={setPlaying} />}
       {frames && type === "database" && <DbReplay frames={frames} playing={playing} setPlaying={setPlaying} />}
-      {frames && type !== "rdp" && type !== "database" && <TerminalReplay frames={frames} playing={playing} setPlaying={setPlaying} />}
+      {frames && type !== "rdp" && type !== "vnc" && type !== "database" && (
+        <TerminalReplay frames={frames} playing={playing} setPlaying={setPlaying} />
+      )}
     </div>
   );
 }

@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 
 CONTROL_PLANE_URL="http://localhost:4000"
 
-echo "==> Bringing up Docker targets (guacd, rdp-target, ssh-target, db-target, dex)..."
+echo "==> Bringing up Docker targets (guacd, rdp-target, vnc-target, ssh-target, db-target, dex)..."
 # Start whatever already exists (from either this compose file or the old
 # manual `docker run` commands — either way it's just `docker start <name>`,
 # a harmless no-op if it's already running), and only ask compose to
@@ -21,7 +21,7 @@ echo "==> Bringing up Docker targets (guacd, rdp-target, ssh-target, db-target, 
 # `docker compose up`, which would try to create fresh containers on top of
 # already-running ones with the same names/ports and fail.
 MISSING=()
-for name in guacd rdp-target ssh-target db-target dex; do
+for name in guacd rdp-target vnc-target ssh-target db-target dex; do
   if docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
     docker start "$name" >/dev/null
   else
@@ -38,6 +38,8 @@ for i in $(seq 1 10); do
   docker exec rdp-target bash -c "echo 'ubuntu:demo1234' | chpasswd" 2>/dev/null && break
   sleep 2
 done
+# vnc-target needs no equivalent post-start step — its VNC_PASSWORD is set
+# via the compose env var at container-creation time, correct from first boot.
 
 for i in $(seq 1 10); do
   docker exec db-target psql -U demo -d appdb -c "

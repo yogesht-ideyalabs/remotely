@@ -46,8 +46,19 @@ export function parseInstructions(buffer: string): { instructions: string[][]; r
 }
 
 export interface RdpConnectParams {
+  // Which guacd backend protocol to select — this function isn't RDP-only,
+  // it's a generic Guacamole-handshake driver (see the "select" write at
+  // the bottom and the data-driven args/values handling below, both
+  // already protocol-agnostic before "vnc" was added).
+  protocol: "rdp" | "vnc";
   hostname: string;
   port: string;
+  // guacd 1.5.5's real "vnc" args response DOES include "username"
+  // (confirmed by querying guacd directly), even though plain RFB/VNC
+  // auth is password-only — most VNC servers, including this project's
+  // demo target, simply ignore it. No special casing needed either way:
+  // the values map below only ever sends keys guacd's own args response
+  // actually names.
   username: string;
   password: string;
   width: string;
@@ -87,6 +98,12 @@ export function connectToGuacd(guacdHost: string, guacdPort: number, params: Rdp
         if (opcode === "args" && stage === "select") {
           stage = "connect";
           const argNames = args; // args[0] doubles as the protocol version token
+          // Safe to always include every key here regardless of which
+          // protocol was selected: encodeInstruction("connect", ...) below
+          // only ever sends the keys guacd's own args response actually
+          // named for that protocol, so RDP-only keys (security,
+          // ignore-cert) are harmless no-ops when VNC is selected, and
+          // vice versa for VNC-only keys (color-depth, cursor, etc.).
           const values: Record<string, string> = {
             [argNames[0]]: argNames[0],
             hostname: params.hostname,
@@ -101,7 +118,13 @@ export function connectToGuacd(guacdHost: string, guacdPort: number, params: Rdp
             "ignore-cert": "true",
             "disable-copy": params.allowClipboard ? "false" : "true",
             "disable-paste": params.allowClipboard ? "false" : "true",
-            "resize-method": "display-update",
+            // Most VNC servers (including the demo target) don't support
+            // live resize the way RDP's "display-update" method does.
+            "resize-method": params.protocol === "rdp" ? "display-update" : "none",
+            "color-depth": "24",
+            "read-only": "false",
+            "swap-red-blue": "false",
+            cursor: "local",
           };
           sock.write(encodeInstruction("size", params.width, params.height, params.dpi));
           sock.write(encodeInstruction("audio"));
@@ -125,6 +148,6 @@ export function connectToGuacd(guacdHost: string, guacdPort: number, params: Rdp
 
     sock.on("data", onData);
     sock.on("error", reject);
-    sock.on("connect", () => sock.write(encodeInstruction("select", "rdp")));
+    sock.on("connect", () => sock.write(encodeInstruction("select", params.protocol)));
   });
 }

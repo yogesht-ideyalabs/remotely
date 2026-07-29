@@ -99,7 +99,7 @@ export interface Organization {
   logoDataUri?: string;
 }
 
-export type ConnectionType = "ssh-direct" | "rdp" | "database" | "kubernetes";
+export type ConnectionType = "ssh-direct" | "rdp" | "database" | "kubernetes" | "vnc";
 
 export interface Connection {
   id: string;
@@ -255,6 +255,31 @@ if (connections.length === 0) {
       port: Number(process.env.RDP_TARGET_PORT ?? 3389),
       username: process.env.RDP_TARGET_USER ?? "ubuntu",
       password: process.env.RDP_TARGET_PASSWORD ?? "demo1234",
+      databaseName: "",
+      assignedUsers: [],
+      createdAt: Date.now(),
+      createdBy: "seed",
+    },
+    {
+      id: "client-a-vnc-01",
+      hostname: "client-a-vnc-01",
+      type: "vnc",
+      labels: { client: "acme-corp", region: "us-east-1", env: "prod" },
+      folder: "Client A / Desktops",
+      // Same reasoning as the RDP target above — dialed by guacd, which
+      // runs *inside* the Docker network, so it uses the container name.
+      host: process.env.VNC_TARGET_HOST ?? "vnc-target",
+      port: Number(process.env.VNC_TARGET_PORT ?? 5900),
+      // VNC/RFB has no real username concept (guac.ts's VNC connect-args
+      // never ask guacd for one, so this is never actually sent) — but
+      // `username` still doubles as the RBAC "login" dimension every
+      // connection type is scoped by (see loginAllowed in rbac.ts, which
+      // requires an exact match against a role's `logins` list). Reusing
+      // "demo" — the same login the seeded ssh-target/db-target
+      // connections already use — keeps this connection reachable by the
+      // existing seed roles without inventing a new logins entry.
+      username: "demo",
+      password: process.env.VNC_TARGET_PASSWORD ?? "demo1234",
       databaseName: "",
       assignedUsers: [],
       createdAt: Date.now(),

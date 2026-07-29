@@ -104,7 +104,7 @@ export default function WatchSession() {
       };
     }
 
-    if (sessionType === "rdp") {
+    if (sessionType === "rdp" || sessionType === "vnc") {
       if (!canvasRef.current) return;
       new GuacClient(ws, canvasRef.current); // constructor takes over ws.onmessage itself
       return;
@@ -138,7 +138,7 @@ export default function WatchSession() {
 
       {(sessionType === "ssh-agent" || sessionType === "ssh-direct" || sessionType === "kubernetes") && <div className="term-wrap" ref={termContainerRef} />}
 
-      {sessionType === "rdp" && (
+      {(sessionType === "rdp" || sessionType === "vnc") && (
         <div className="term-wrap" style={{ overflow: "auto" }}>
           <canvas ref={canvasRef} width={1024} height={768} style={{ background: "#000" }} />
         </div>

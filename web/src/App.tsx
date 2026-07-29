@@ -4,6 +4,7 @@ import Login from "./pages/Login";
 import Resources from "./pages/Resources";
 import TerminalPage from "./pages/Terminal";
 import RdpConsole from "./pages/RdpConsole";
+import VncConsole from "./pages/VncConsole";
 import Database from "./pages/Database";
 import Audit from "./pages/Audit";
 import Recordings from "./pages/Recordings";
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/resources" element={<Resources />} />
           <Route path="/terminal/:resourceId" element={<TerminalPage />} />
           <Route path="/rdp/:resourceId" element={<RdpConsole />} />
+          <Route path="/vnc/:resourceId" element={<VncConsole />} />
           <Route path="/db/:resourceId" element={<Database />} />
           <Route path="/audit" element={<Audit />} />
           <Route path="/recordings" element={<Recordings />} />

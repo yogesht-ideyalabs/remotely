@@ -231,7 +231,7 @@ export function deleteRoleApi(name: string): Promise<null> {
 
 // ---------- admin: connections ----------
 
-export type ConnectionType = "ssh-direct" | "rdp" | "database" | "kubernetes";
+export type ConnectionType = "ssh-direct" | "rdp" | "database" | "kubernetes" | "vnc";
 
 export interface Connection {
   id: string;

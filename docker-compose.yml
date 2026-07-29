@@ -38,6 +38,16 @@ services:
       - "3389:3389"
     restart: unless-stopped
 
+  vnc-target:
+    image: dorowu/ubuntu-desktop-lxde-vnc
+    container_name: vnc-target
+    environment:
+      VNC_PASSWORD: demo1234
+      RESOLUTION: 1024x768
+    ports:
+      - "5900:5900"
+    restart: unless-stopped
+
   ssh-target:
     image: linuxserver/openssh-server
     container_name: ssh-target
@@ -79,3 +89,11 @@ services:
 networks:
   default:
     name: remotely-net
+    # This network predates docker-compose.yml (originally created by hand
+    # via `docker network create remotely-net`, per the README's manual
+    # "Docker targets" instructions) and carries no compose-managed labels
+    # — without external:true, compose refuses to create containers on it
+    # ("network ... has incorrect label com.docker.compose.network").
+    # external:true tells compose to just attach to whatever already
+    # exists by that name instead of trying to own/validate it.
+    external: true

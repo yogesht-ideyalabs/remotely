@@ -12,6 +12,7 @@ function formatDuration(seconds: number): string {
 
 function connectPath(s: ActiveSession): string {
   if (s.type === "rdp") return `/rdp/${s.resourceId}`;
+  if (s.type === "vnc") return `/vnc/${s.resourceId}`;
   if (s.type === "database") return `/db/${s.resourceId}`;
   return `/terminal/${s.resourceId}?kind=${s.type}`;
 }
