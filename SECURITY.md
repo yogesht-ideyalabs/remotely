@@ -8,7 +8,7 @@ real consequences for anyone self-hosting it. Please report responsibly.
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Email **tools@ideyalabs.com** with:
+Email **yogeshinit@gmail.com** with:
 - A description of the issue and its impact.
 - Steps to reproduce (a minimal repro is very helpful).
 - Any relevant logs, requests, or screenshots.
