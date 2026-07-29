@@ -17,6 +17,8 @@ const emptyForm = {
   manageLabelsJson: "{}",
   allowClipboard: true,
   breakGlassEligible: false,
+  requireSessionModeration: false,
+  canModerate: false,
 };
 
 export default function Roles() {
@@ -98,6 +100,8 @@ export default function Roles() {
       manageLabels,
       allowClipboard: form.allowClipboard,
       breakGlassEligible: form.breakGlassEligible,
+      requireSessionModeration: (form as any).requireSessionModeration || false,
+      canModerate: (form as any).canModerate || false,
     };
     try {
       if (editing === "") {
@@ -257,6 +261,43 @@ export default function Roles() {
                   skipping the normal admin approval queue — for genuine emergencies. Still fully logged in the audit
                   trail and approval history either way, and the grant expires automatically after a short fixed
                   window rather than staying open indefinitely.
+                </span>
+              </span>
+            </label>
+          </div>
+          <div className="form-row">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={(form as any).requireSessionModeration || false}
+                onChange={(e) => setForm({ ...form, requireSessionModeration: e.target.checked } as any)}
+                style={{ width: "auto", margin: 0 }}
+              />
+              Require session moderation
+              <span className="field-tip" tabIndex={0}>
+                <span className="field-tip-icon">i</span>
+                <span className="field-tip-popover">
+                  If checked, any session this role covers will NOT start until a moderator (a user whose role has
+                  "Can moderate" checked) joins the session's watch channel. The session enters a waiting state
+                  and the user sees "Waiting for moderator..." until one joins. Times out after 5 minutes if no
+                  moderator appears.
+                </span>
+              </span>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={(form as any).canModerate || false}
+                onChange={(e) => setForm({ ...form, canModerate: e.target.checked } as any)}
+                style={{ width: "auto", margin: 0 }}
+              />
+              Can moderate sessions
+              <span className="field-tip" tabIndex={0}>
+                <span className="field-tip-icon">i</span>
+                <span className="field-tip-popover">
+                  Lets users with this role act as moderators for sessions that require moderation. They'll see
+                  pending sessions on the Active Sessions page and can join to release the hold. They can also
+                  forcibly terminate moderated sessions at any time.
                 </span>
               </span>
             </label>

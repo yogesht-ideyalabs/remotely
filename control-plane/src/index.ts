@@ -409,8 +409,25 @@ app.get("/api/profile", requireAuth, (req: AuthedRequest, res) => {
     roles: user.roles,
     avatar: user.avatar ?? null,
     mfaEnabled: Boolean(user.mfaEnabled),
+    passwordlessEnabled: Boolean((user as any).passwordlessEnabled),
     createdAt: user.createdAt,
   });
+});
+
+// Toggle passwordless login (per-user)
+app.post("/api/profile/passwordless", requireAuth, (req: AuthedRequest, res) => {
+  const user = findUser(req.user!.sub);
+  if (!user) { res.status(404).json({ error: "user not found" }); return; }
+  const { enabled } = req.body;
+  // Require at least one passkey registered before enabling
+  if (enabled && (!user.webauthnCredentials || user.webauthnCredentials.length === 0)) {
+    res.status(400).json({ error: "Register at least one passkey before enabling passwordless login" });
+    return;
+  }
+  (user as any).passwordlessEnabled = Boolean(enabled);
+  updateUser(user.username, {});  // trigger save
+  logAudit(req.user!.sub, "passwordless_toggled", null, `passwordless=${enabled}`);
+  res.json({ passwordlessEnabled: Boolean(enabled) });
 });
 
 app.patch("/api/profile/avatar", requireAuth, (req: AuthedRequest, res) => {
@@ -608,6 +625,10 @@ app.post("/api/access-requests", requireAuth, (req: AuthedRequest, res) => {
     );
   } else {
     logAudit(req.user!.sub, "access_request_created", resourceId, `login=${login} requestId=${request.id}`);
+    // Notify all configured ChatOps channels (Slack/PagerDuty/Teams/Discord)
+    import("./chatOpsIntegrations.js").then(({ notifyAllChatOps }) => {
+      notifyAllChatOps({ id: request.id, requestedBy: req.user!.sub, resourceId, login, reason: String(reason), breakGlass: false }).catch(() => {});
+    }).catch(() => {});
   }
   res.status(201).json(getAccessRequest(request.id));
 });
@@ -2615,7 +2636,7 @@ agentWss.on("connection", (socket, req) => {
 
 const sessionWss = new WebSocketServer({ noServer: true });
 
-sessionWss.on("connection", (browserSocket, req) => {
+sessionWss.on("connection", async (browserSocket, req) => {
   const url = new URL(req.url ?? "", "http://internal");
   const token = url.searchParams.get("token");
   const resourceId = url.searchParams.get("resourceId");
@@ -2652,6 +2673,31 @@ sessionWss.on("connection", (browserSocket, req) => {
     logAudit(payload.sub, "access_denied", resourceId, reason);
     browserSocket.close(4003, reason);
     return;
+  }
+
+  // ─── Moderated Sessions check ──────────────────────────────────────────
+  const needsModeration = roles.some((r) => r.requireSessionModeration);
+  if (needsModeration) {
+    const { awaitModeration, cancelPendingSession } = await import("./moderatedSessions.js");
+    const moderationSessionId = crypto.randomUUID();
+    browserSocket.send(JSON.stringify({ type: "moderation_pending", message: "Waiting for a moderator to join..." }));
+    logAudit(payload.sub, "session_moderation_pending", resourceId, `Waiting for moderator`);
+
+    const moderationTimeout = 300; // 5 minutes
+    try {
+      await awaitModeration(moderationSessionId, resourceId, agent.hostname, payload.sub, {
+        required: true, minModerators: 1, onModeratorLeave: "terminate", timeoutSeconds: moderationTimeout,
+      });
+      browserSocket.send(JSON.stringify({ type: "moderation_approved", message: "Moderator joined. Session starting." }));
+      logAudit(payload.sub, "session_moderation_approved", resourceId, `Moderator joined`);
+    } catch {
+      logAudit(payload.sub, "session_moderation_timeout", resourceId, `No moderator joined within ${moderationTimeout}s`);
+      browserSocket.close(4009, "No moderator joined in time");
+      cancelPendingSession(moderationSessionId);
+      return;
+    }
+    // Clean up on disconnect before moderation completes
+    browserSocket.on("close", () => cancelPendingSession(moderationSessionId));
   }
 
   const sessionId = crypto.randomUUID();

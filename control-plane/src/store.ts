@@ -51,6 +51,13 @@ export interface Role {
   // defaults to a short expiry. Not the same as broad access — the
   // requester still names one specific resource+login at a time.
   breakGlassEligible: boolean;
+  // Moderated sessions: if set, any session this role covers requires
+  // a moderator (a user with canModerate=true) to be present live before
+  // the session can proceed. The session enters a "pending_moderation"
+  // state until the moderator joins via the watch/spectate channel.
+  requireSessionModeration?: boolean;
+  // If true, this role's holder can act as a moderator for moderated sessions.
+  canModerate?: boolean;
 }
 
 export interface User {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startRegistration } from "@simplewebauthn/browser";
 import {
+  apiFetch,
   fetchProfile,
   updateAvatarApi,
   changePasswordApi,
@@ -68,6 +69,7 @@ export default function Profile() {
         <>
           <SecurityTab profile={profile} onChange={load} />
           <PasskeysSection />
+          <PasswordlessToggle profile={profile} onChange={load} />
         </>
       )}
       {tab === "activity" && <ActivityTab />}
@@ -586,6 +588,56 @@ function ActivityTab() {
       )}
       {events === null && <Skeleton lines={4} />}
       {events && events.length === 0 && <EmptyState message="No activity yet." />}
+    </div>
+  );
+}
+
+
+function PasswordlessToggle({ profile, onChange }: { profile: ProfileType; onChange: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const enabled = (profile as any).passwordlessEnabled || false;
+
+  async function toggle() {
+    setLoading(true);
+    setError(null);
+    try {
+      await apiFetch("/api/profile/passwordless", {
+        method: "POST",
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      onChange();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="section-card">
+      <h3>🔐 Passwordless Login</h3>
+      {error && <div className="error-banner">{error}</div>}
+      {enabled ? (
+        <div>
+          <div className="hint" style={{ color: "var(--ok)", marginBottom: 10 }}>
+            Passwordless is enabled — you can sign in with just your passkey, no username or password needed.
+          </div>
+          <button className="danger-link" onClick={toggle} disabled={loading}>
+            {loading ? "Disabling..." : "Disable passwordless login"}
+          </button>
+        </div>
+      ) : (
+        <div>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Enable passwordless to sign in with just a tap — no username, no password. Requires at least one passkey registered above.
+          </div>
+          <button className="secondary" onClick={toggle} disabled={loading}>
+            {loading ? "Enabling..." : "Enable passwordless login"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
