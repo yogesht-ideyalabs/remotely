@@ -3466,6 +3466,129 @@ function warnAboutUnsetSecrets() {
   console.warn(`${border}\n`);
 }
 
+// ─── Moderated Sessions API ──────────────────────────────────────────────────
+import { listPendingModeratedSessions } from "./moderatedSessions.js";
+app.get("/api/admin/moderated-sessions", requireAuth, requireAdmin, (_req, res) => {
+  res.json(listPendingModeratedSessions());
+});
+
+// ─── Slack Integration API ───────────────────────────────────────────────────
+import { getSlackConfig, setSlackConfig, verifySlackSignature, handleSlackInteraction } from "./slackApproval.js";
+app.get("/api/admin/integrations/slack", requireAuth, requireAdmin, (_req, res) => {
+  const config = getSlackConfig();
+  res.json(config ? { enabled: config.enabled, channelId: config.channelId, approvalTtlMinutes: config.approvalTtlMinutes, configured: true } : { enabled: false, configured: false });
+});
+app.post("/api/admin/integrations/slack", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const { enabled, botToken, signingSecret, channelId, approvalTtlMinutes } = req.body;
+  setSlackConfig({ enabled: enabled !== false, botToken: botToken || "", signingSecret: signingSecret || "", channelId: channelId || "", approvalTtlMinutes: approvalTtlMinutes || 60 });
+  logAudit(req.user!.sub, "slack_config_updated", null, `Slack integration ${enabled ? "enabled" : "disabled"}`);
+  res.json({ ok: true });
+});
+// Slack interaction callback (buttons clicked) — no auth (Slack signs it)
+app.post("/api/integrations/slack/interact", express.urlencoded({ extended: true }), (req, res) => {
+  const signature = req.headers["x-slack-signature"] as string || "";
+  const timestamp = req.headers["x-slack-request-timestamp"] as string || "";
+  const rawBody = typeof req.body.payload === "string" ? req.body.payload : JSON.stringify(req.body);
+  if (!verifySlackSignature(signature, timestamp, rawBody)) {
+    res.status(401).json({ error: "Invalid signature" });
+    return;
+  }
+  const payload = JSON.parse(typeof req.body.payload === "string" ? req.body.payload : JSON.stringify(req.body));
+  const result = handleSlackInteraction(payload);
+  res.json(result);
+});
+
+// ─── ChatOps (PagerDuty/Teams/Discord) Config API ────────────────────────────
+import { getPagerDutyConfig, setPagerDutyConfig, getTeamsConfig, setTeamsConfig, getDiscordConfig, setDiscordConfig } from "./chatOpsIntegrations.js";
+app.get("/api/admin/integrations/chatops", requireAuth, requireAdmin, (_req, res) => {
+  res.json({ pagerduty: getPagerDutyConfig(), teams: getTeamsConfig(), discord: getDiscordConfig() });
+});
+app.post("/api/admin/integrations/pagerduty", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  setPagerDutyConfig(req.body);
+  logAudit(req.user!.sub, "pagerduty_config_updated", null, `PagerDuty ${req.body.enabled ? "enabled" : "disabled"}`);
+  res.json({ ok: true });
+});
+app.post("/api/admin/integrations/teams", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  setTeamsConfig(req.body);
+  logAudit(req.user!.sub, "teams_config_updated", null, `Teams ${req.body.enabled ? "enabled" : "disabled"}`);
+  res.json({ ok: true });
+});
+app.post("/api/admin/integrations/discord", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  setDiscordConfig(req.body);
+  logAudit(req.user!.sub, "discord_config_updated", null, `Discord ${req.body.enabled ? "enabled" : "disabled"}`);
+  res.json({ ok: true });
+});
+
+// ─── Passwordless Login API ──────────────────────────────────────────────────
+import { getPasswordlessAuthOptions, verifyPasswordlessAuth } from "./passwordless.js";
+app.post("/api/login/passwordless/options", async (_req, res) => {
+  try {
+    const { sessionId, options } = await getPasswordlessAuthOptions();
+    res.json({ sessionId, options });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+app.post("/api/login/passwordless/verify", async (req, res) => {
+  const { sessionId, response } = req.body;
+  if (!sessionId || !response) { res.status(400).json({ error: "sessionId and response required" }); return; }
+  const result = await verifyPasswordlessAuth(sessionId, response);
+  if ("error" in result) { res.status(401).json({ error: result.error }); return; }
+  const token = signToken({ sub: result.user.username, roles: result.user.roles });
+  logAudit(result.user.username, "login", null, "passwordless (passkey)");
+  const flags = adminFlags(result.user.roles);
+  res.json({ token, username: result.user.username, roles: result.user.roles, ...flags });
+});
+
+// ─── Kubernetes Cluster Browsing API ─────────────────────────────────────────
+import { loadKubeConfig, listNamespaces, listPods, listDeployments, listServices, getPodLogs, getClusterInfo } from "./k8sClusterAccess.js";
+app.get("/api/k8s/:connectionId/info", requireAuth, (req: AuthedRequest, res) => {
+  const conn = getConnection(req.params.connectionId);
+  if (!conn || conn.type !== "kubernetes") { res.status(404).json({ error: "Kubernetes connection not found" }); return; }
+  try {
+    const kc = loadKubeConfig(conn, req.user!.sub);
+    getClusterInfo(kc, conn).then((info) => res.json(info)).catch((e) => res.status(500).json({ error: (e as Error).message }));
+  } catch (e) { res.status(500).json({ error: (e as Error).message }); }
+});
+app.get("/api/k8s/:connectionId/namespaces", requireAuth, (req: AuthedRequest, res) => {
+  const conn = getConnection(req.params.connectionId);
+  if (!conn || conn.type !== "kubernetes") { res.status(404).json({ error: "Not found" }); return; }
+  const kc = loadKubeConfig(conn, req.user!.sub);
+  listNamespaces(kc).then((ns) => res.json(ns)).catch((e) => res.status(500).json({ error: (e as Error).message }));
+});
+app.get("/api/k8s/:connectionId/pods", requireAuth, (req: AuthedRequest, res) => {
+  const conn = getConnection(req.params.connectionId);
+  if (!conn || conn.type !== "kubernetes") { res.status(404).json({ error: "Not found" }); return; }
+  const kc = loadKubeConfig(conn, req.user!.sub);
+  const ns = req.query.namespace as string | undefined;
+  listPods(kc, ns).then((pods) => res.json(pods)).catch((e) => res.status(500).json({ error: (e as Error).message }));
+});
+app.get("/api/k8s/:connectionId/deployments", requireAuth, (req: AuthedRequest, res) => {
+  const conn = getConnection(req.params.connectionId);
+  if (!conn || conn.type !== "kubernetes") { res.status(404).json({ error: "Not found" }); return; }
+  const kc = loadKubeConfig(conn, req.user!.sub);
+  const ns = req.query.namespace as string || "default";
+  listDeployments(kc, ns).then((deps) => res.json(deps)).catch((e) => res.status(500).json({ error: (e as Error).message }));
+});
+app.get("/api/k8s/:connectionId/services", requireAuth, (req: AuthedRequest, res) => {
+  const conn = getConnection(req.params.connectionId);
+  if (!conn || conn.type !== "kubernetes") { res.status(404).json({ error: "Not found" }); return; }
+  const kc = loadKubeConfig(conn, req.user!.sub);
+  const ns = req.query.namespace as string || "default";
+  listServices(kc, ns).then((svcs) => res.json(svcs)).catch((e) => res.status(500).json({ error: (e as Error).message }));
+});
+app.get("/api/k8s/:connectionId/pods/:podName/logs", requireAuth, (req: AuthedRequest, res) => {
+  const conn = getConnection(req.params.connectionId);
+  if (!conn || conn.type !== "kubernetes") { res.status(404).json({ error: "Not found" }); return; }
+  const kc = loadKubeConfig(conn, req.user!.sub);
+  const ns = req.query.namespace as string || "default";
+  const container = req.query.container as string | undefined;
+  const tail = Number(req.query.tail) || 100;
+  getPodLogs(kc, ns, req.params.podName, container, tail)
+    .then((logs) => res.json({ logs }))
+    .catch((e) => res.status(500).json({ error: (e as Error).message }));
+});
+
 server.listen(PORT, () => {
   console.log(`Remotely control plane listening on :${PORT}`);
   warnAboutUnsetSecrets();
