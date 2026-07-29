@@ -32,6 +32,7 @@ import Architecture from "./pages/Architecture";
 import SharedDiagram from "./pages/SharedDiagram";
 import Monitors from "./pages/Monitors";
 import SecurityPolicy from "./pages/SecurityPolicy";
+import Features from "./pages/Features";
 
 export default function App() {
   return (
@@ -71,6 +72,7 @@ export default function App() {
           <Route path="/admin/architecture" element={<Architecture />} />
           <Route path="/admin/monitors" element={<Monitors />} />
           <Route path="/admin/security-policy" element={<SecurityPolicy />} />
+          <Route path="/features" element={<Features />} />
         </Route>
       </Routes>
     </BrowserRouter>

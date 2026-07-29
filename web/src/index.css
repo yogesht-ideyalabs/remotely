@@ -1572,3 +1572,44 @@ textarea { font-family: inherit; }
 /* Sync Now modal (SyncNowModal.tsx) */
 .sync-result { background: var(--bg); border: 1px solid var(--panel-border); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.5rem 0; }
 .sync-result p { margin: 0 0 0.5rem; font-size: 0.85rem; }
+
+/* ─── Features & Roadmap Page ─────────────────────────────────────────────── */
+
+.features-page { max-width: 1000px; margin: 0 auto; padding: 2rem 1.5rem; }
+.features-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+.features-header h1 { margin: 0; font-size: 1.6rem; }
+.features-subtitle { color: var(--text-dim); margin: 0.25rem 0 0; font-size: 0.9rem; }
+.features-stats { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.stat-pill { padding: 0.3rem 0.7rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+.stat-live { background: rgba(62,207,142,0.1); color: #3ecf8e; }
+.stat-progress { background: rgba(245,158,11,0.1); color: #f59e0b; }
+.stat-planned { background: rgba(91,140,255,0.1); color: #5b8cff; }
+.stat-total { background: var(--panel); color: var(--text-dim); border: 1px solid var(--panel-border); }
+
+.features-filters { display: flex; gap: 0.75rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+.features-search {
+  flex: 1; min-width: 200px; background: var(--panel); border: 1px solid var(--panel-border);
+  color: var(--text); padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.85rem;
+}
+.features-filters select {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  color: var(--text); padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.85rem;
+}
+
+.features-list { display: flex; flex-direction: column; gap: 2rem; }
+.features-category {}
+.category-title { font-size: 1rem; margin: 0 0 0.75rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+.category-features { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.feature-card {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 8px; padding: 1rem 1.25rem;
+  transition: border-color 0.15s;
+}
+.feature-card:hover { border-color: var(--accent); }
+.feature-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
+.feature-name { font-weight: 600; font-size: 0.9rem; }
+.feature-status { font-size: 0.7rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
+.feature-desc { color: var(--text-dim); font-size: 0.82rem; margin: 0 0 0.5rem; line-height: 1.4; }
+.feature-impact { font-size: 0.8rem; color: var(--text); line-height: 1.4; display: flex; gap: 0.4rem; }
+.impact-label { flex-shrink: 0; font-weight: 500; }

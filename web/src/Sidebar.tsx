@@ -12,6 +12,7 @@ interface NavItem {
 const PRIMARY_ITEMS: NavItem[] = [
   { to: "/resources", label: "Resources", icon: "resources" },
   { to: "/access-requests", label: "Access", icon: "key" },
+  { to: "/features", label: "Features", icon: "star" },
 ];
 
 // Same permission gating AdminMenu.tsx used to apply as a dropdown — kept
