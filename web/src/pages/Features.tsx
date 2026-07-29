@@ -292,6 +292,13 @@ const FEATURES: Feature[] = [
     impact: "Diagrams that are genuinely readable — not spaghetti. Each view type gets the layout that makes it clearest.",
   },
   {
+    name: "Network Segmentation View (VPC → Subnet → Resource)",
+    status: "live",
+    category: "Infrastructure & Diagrams",
+    description: "Interactive VPC/subnet nesting with a real public-vs-private distinction, matching Scanopy's L3 logical view — but editable and clickable, not a static render.",
+    impact: "See at a glance which resources sit directly reachable from the internet vs. behind a NAT gateway, across every provider and account in one diagram.",
+  },
+  {
     name: "Shareable Diagram Links",
     status: "live",
     category: "Infrastructure & Diagrams",
@@ -353,10 +360,10 @@ const FEATURES: Feature[] = [
   },
   {
     name: "Machine ID / Non-Human Identity",
-    status: "planned",
-    category: "Upcoming",
-    description: "Short-lived certificates for CI pipelines, bots, and service accounts — replacing long-lived static secrets.",
-    impact: "CI/CD pipelines stop using shared API keys. Every automation run gets its own ephemeral credential that auto-expires.",
+    status: "live",
+    category: "Authentication & Security",
+    description: "Bots hold real role assignments (the exact RBAC engine humans use) and authenticate with a 15-minute, rotatable token bootstrapped via a single/limited-use join token — no long-lived static secret.",
+    impact: "CI/CD pipelines and automation scripts stop holding shared, standing credentials. Every bot's access is scoped, audited (as bot:<id>), and instantly revocable, same as a human's.",
   },
   {
     name: "VNet-Style Transparent Access",
@@ -395,9 +402,9 @@ const FEATURES: Feature[] = [
   },
   {
     name: "Terraform Provider",
-    status: "planned",
-    category: "Upcoming",
-    description: "Manage Remotely resources (roles, users, connections, policies) as Terraform IaC.",
+    status: "live",
+    category: "Operations & Compliance",
+    description: "Manage Remotely resources (organizations, roles, users, connections) as Terraform IaC — terraform-provider-remotely, a real Go provider with a working example config.",
     impact: "GitOps workflow for access management. Changes go through PR review before applying, just like infrastructure.",
   },
   {

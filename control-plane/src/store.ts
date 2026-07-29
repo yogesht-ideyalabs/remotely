@@ -998,11 +998,18 @@ export interface JoinToken {
   uses: number;
   expiresAt: number;
   revoked: boolean;
+  // Which identity this token is allowed to bootstrap — undefined for
+  // agent-join tokens (their subject is implicit: whichever agent presents
+  // the token, per the existing /agent WS handshake). Set to a Bot's id
+  // for bot-join tokens (see "Bots" below), so one shared token-validity
+  // mechanism can't be used to bootstrap into an identity it wasn't issued
+  // for.
+  subjectId?: string;
 }
 
 export const joinTokens: JoinToken[] = loadTable<JoinToken>("joinTokens");
 
-export function createJoinToken(createdBy: string, label: string, maxUses: number, ttlMinutes: number): JoinToken {
+export function createJoinToken(createdBy: string, label: string, maxUses: number, ttlMinutes: number, subjectId?: string): JoinToken {
   const token: JoinToken = {
     token: crypto.randomBytes(24).toString("hex"),
     label,
@@ -1012,6 +1019,7 @@ export function createJoinToken(createdBy: string, label: string, maxUses: numbe
     uses: 0,
     expiresAt: Date.now() + ttlMinutes * 60_000,
     revoked: false,
+    subjectId,
   };
   joinTokens.push(token);
   saveRow("joinTokens", token.token, token);
@@ -1043,6 +1051,73 @@ export function consumeJoinToken(token: string): { ok: true } | { ok: false; rea
   t.uses++;
   saveRow("joinTokens", t.token, t);
   return { ok: true };
+}
+
+// ---------- Bots (machine identity — see docs/plans/2026-07-29-machine-id-bots.md) ----------
+// Deliberately User-shaped-but-simpler: a Bot is a real identity with real
+// Role assignments, so the entire existing RBAC engine (labels, resource-
+// type scoping, login allowlists, CIDR) applies to it unchanged — no new
+// authorization logic, only a different way of authenticating.
+
+export interface Bot {
+  id: string;
+  roles: string[];
+  createdAt: number;
+  createdBy: string;
+  // Bumped to instantly revoke every token this bot currently holds — same
+  // "log out everywhere" mechanism as User.tokenVersion.
+  tokenVersion?: number;
+  lastJoinedAt?: number;
+  lastJoinIp?: string;
+}
+
+export const bots: Bot[] = loadTable<Bot>("bots");
+
+export function findBot(id: string): Bot | undefined {
+  return bots.find((b) => b.id === id);
+}
+
+export function listBots(): Bot[] {
+  return bots;
+}
+
+export function createBot(id: string, roles: string[], createdBy: string): Bot {
+  const bot: Bot = { id, roles, createdAt: Date.now(), createdBy };
+  bots.push(bot);
+  saveRow("bots", bot.id, bot);
+  return bot;
+}
+
+export function updateBotRoles(id: string, roles: string[]): Bot | undefined {
+  const bot = findBot(id);
+  if (!bot) return undefined;
+  bot.roles = roles;
+  saveRow("bots", bot.id, bot);
+  return bot;
+}
+
+export function recordBotJoin(id: string, ip: string | undefined): void {
+  const bot = findBot(id);
+  if (!bot) return;
+  bot.lastJoinedAt = Date.now();
+  bot.lastJoinIp = ip;
+  saveRow("bots", bot.id, bot);
+}
+
+export function bumpBotTokenVersion(id: string): Bot | undefined {
+  const bot = findBot(id);
+  if (!bot) return undefined;
+  bot.tokenVersion = (bot.tokenVersion ?? 0) + 1;
+  saveRow("bots", bot.id, bot);
+  return bot;
+}
+
+export function deleteBot(id: string): boolean {
+  const idx = bots.findIndex((b) => b.id === id);
+  if (idx === -1) return false;
+  bots.splice(idx, 1);
+  deleteRow("bots", id);
+  return true;
 }
 
 export interface AgentIdentity {

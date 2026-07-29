@@ -33,6 +33,9 @@ import SharedDiagram from "./pages/SharedDiagram";
 import Monitors from "./pages/Monitors";
 import SecurityPolicy from "./pages/SecurityPolicy";
 import Features from "./pages/Features";
+import ChatOps from "./pages/ChatOps";
+import KubernetesBrowser from "./pages/KubernetesBrowser";
+import Bots from "./pages/Bots";
 
 export default function App() {
   return (
@@ -72,7 +75,10 @@ export default function App() {
           <Route path="/admin/architecture" element={<Architecture />} />
           <Route path="/admin/monitors" element={<Monitors />} />
           <Route path="/admin/security-policy" element={<SecurityPolicy />} />
+          <Route path="/admin/bots" element={<Bots />} />
           <Route path="/features" element={<Features />} />
+          <Route path="/admin/chatops" element={<ChatOps />} />
+          <Route path="/k8s/:connectionId" element={<KubernetesBrowser />} />
         </Route>
       </Routes>
     </BrowserRouter>

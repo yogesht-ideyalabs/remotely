@@ -381,6 +381,163 @@ function appTagOf(r: InfraResource): string | null {
   return null;
 }
 
+// ─── Network segmentation (VPC → subnet → resource) ────────────────────────
+// Ports the VPC/subnet nesting logic that already exists as a static
+// Mermaid diagram on the Infrastructure Map page (generateMermaidNetwork in
+// infraDiscovery.ts — same public/private subnet distinction, same IGW/NAT
+// attachment) into real interactive DiagramNode/DiagramEdge objects for the
+// Architecture/Diagram Editor pages, matching Scanopy's "L3 logical" view.
+// Two levels of nesting (VPC group containing subnet sub-groups containing
+// resource nodes) — every other strategy here only nests one level deep;
+// confirmed the frontend's parentId mechanism has no hardcoded depth limit
+// before relying on it.
+function buildNetworkDiagram(resources: InfraResource[]): { nodes: DiagramNode[]; edges: DiagramEdge[] } {
+  const nodes: DiagramNode[] = [];
+  const vpcs = resources.filter((r) => r.type === "vpc");
+  const subnetsOf = (vpcExternalId: string) => resources.filter((r) => r.type === "subnet" && r.networkInfo?.vpcId === vpcExternalId);
+  const membersOfSubnet = (subnetExternalId: string) => resources.filter((r) => r.networkInfo?.subnetId === subnetExternalId && r.type !== "subnet");
+  const gatewaysOf = (vpcExternalId: string) =>
+    resources.filter((r) => (r.type === "internet-gateway" || r.type === "nat-gateway") && r.networkInfo?.vpcId === vpcExternalId);
+
+  let vpcY = 0;
+  const inAnyVpc = new Set<string>();
+
+  for (const vpc of vpcs) {
+    const subnets = subnetsOf(vpc.externalId);
+    const gateways = gatewaysOf(vpc.externalId);
+    const vpcGroupId = `group-vpc-${vpc.externalId}`;
+
+    let subnetX = 30;
+    const subnetTop = 60;
+    let vpcContentHeight = 0;
+
+    for (const subnet of subnets) {
+      inAnyVpc.add(subnet.externalId);
+      const members = membersOfSubnet(subnet.externalId);
+      const cols = Math.min(3, members.length) || 1;
+      const rows = Math.ceil(members.length / cols) || 1;
+      const subnetWidth = Math.max(220, cols * 170);
+      const subnetHeight = 70 + rows * 90;
+      const subnetGroupId = `group-subnet-${subnet.externalId}`;
+      const isPublic = Boolean((subnet.properties as { public?: boolean } | undefined)?.public);
+
+      nodes.push({
+        id: subnetGroupId,
+        type: "group",
+        position: { x: subnetX, y: subnetTop },
+        parentId: vpcGroupId,
+        extent: "parent",
+        data: {
+          // resourceToNodeData spreads first — it sets a generic icon/color
+          // from the shared ICONS/COLORS lookup (subnet -> "📡" for every
+          // subnet, public or private), which would silently overwrite the
+          // public/private distinction below if applied after it instead of
+          // before. This is the exact bug caught live: the first version of
+          // this had the spread last and every subnet rendered identically.
+          ...resourceToNodeData(subnet),
+          label: subnet.name || subnet.externalId,
+          icon: isPublic ? "🌍" : "🔒",
+          provider: subnet.provider,
+          resourceType: "subnet",
+          color: isPublic ? "#22c55e" : "#64748b",
+        },
+        style: {
+          width: subnetWidth,
+          height: subnetHeight,
+          backgroundColor: isPublic ? "rgba(34,197,94,0.06)" : "rgba(100,116,139,0.06)",
+          borderRadius: 8,
+          border: `2px dashed ${isPublic ? "rgba(34,197,94,0.35)" : "rgba(100,116,139,0.35)"}`,
+        },
+      });
+
+      members.forEach((r, i) => {
+        inAnyVpc.add(r.externalId);
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        nodes.push({
+          id: nodeIdFor(r),
+          type: "infra",
+          position: { x: 25 + col * 160, y: 55 + row * 90 },
+          data: resourceToNodeData(r),
+          parentId: subnetGroupId,
+          extent: "parent",
+        });
+      });
+
+      subnetX += subnetWidth + 40;
+      vpcContentHeight = Math.max(vpcContentHeight, subnetTop + subnetHeight);
+    }
+
+    gateways.forEach((gw, i) => {
+      inAnyVpc.add(gw.externalId);
+      nodes.push({
+        id: nodeIdFor(gw),
+        type: "infra",
+        position: { x: subnetX + i * 190, y: subnetTop },
+        data: resourceToNodeData(gw),
+        parentId: vpcGroupId,
+        extent: "parent",
+      });
+    });
+
+    const vpcWidth = Math.max(400, subnetX + gateways.length * 190 + 40);
+    const vpcHeight = Math.max(200, vpcContentHeight + 40);
+    const cidr = (vpc.properties as { cidr?: string } | undefined)?.cidr;
+
+    nodes.push({
+      id: vpcGroupId,
+      type: "group",
+      position: { x: 50, y: vpcY },
+      data: {
+        // Same spread-ordering fix as the subnet group above — must come
+        // before the label override or the CIDR suffix gets silently
+        // dropped back to the plain resource name.
+        ...resourceToNodeData(vpc),
+        label: cidr ? `${vpc.name || vpc.externalId} (${cidr})` : vpc.name || vpc.externalId,
+        icon: "🌐",
+        provider: vpc.provider,
+        resourceType: "vpc",
+        color: "#5b8cff",
+      },
+      style: { width: vpcWidth, height: vpcHeight, backgroundColor: "rgba(91,140,255,0.04)", borderRadius: 10, border: "2px dashed rgba(91,140,255,0.3)" },
+    });
+
+    vpcY += vpcHeight + 60;
+  }
+
+  // Resources not attached to any discovered VPC (including VPCs
+  // themselves have no "parent" to fall into) — mirrors the Mermaid
+  // version's "External / Global" bucket rather than silently dropping them.
+  const externalResources = resources.filter((r) => r.type !== "vpc" && !inAnyVpc.has(r.externalId));
+  externalResources.forEach((r, i) => {
+    nodes.push({
+      id: nodeIdFor(r),
+      type: "infra",
+      position: { x: 50 + (i % 5) * 190, y: vpcY + Math.floor(i / 5) * 90 },
+      data: resourceToNodeData(r),
+    });
+  });
+
+  // Real relationship edges only, filtered to pairs actually present in
+  // this diagram — same approach buildDiagram/buildWorkloadDiagram use, no
+  // new edge semantics invented beyond what's already discovered.
+  const producedIds = new Set(nodes.filter((n) => n.type === "infra").map((n) => n.id));
+  const edges: DiagramEdge[] = [];
+  for (const r of resources) {
+    for (const rel of r.relationships) {
+      const sourceId = nodeIdFor(r);
+      const targetR = resources.find((x) => x.externalId === rel.targetResourceId);
+      if (!targetR) continue;
+      const targetId = nodeIdFor(targetR);
+      if (producedIds.has(sourceId) && producedIds.has(targetId)) {
+        edges.push({ id: `edge-network-${sourceId}-${targetId}`, source: sourceId, target: targetId, data: { label: rel.type } });
+      }
+    }
+  }
+
+  return { nodes, edges };
+}
+
 // ─── Strategies ───────────────────────────────────────────────────────────
 
 export interface GeneratedAutoDiagram {
@@ -465,6 +622,25 @@ export const AUTO_DIAGRAM_STRATEGIES: DiagramStrategy[] = [
           edges,
         };
       });
+    },
+  },
+  {
+    id: "by-network",
+    label: "Network segmentation",
+    description: "VPC → subnet → resource nesting, distinguishing public and private subnets — which resources sit directly reachable from the internet vs. behind a NAT gateway. Only populated where VPC/subnet discovery exists.",
+    generate: (resources) => {
+      const vpcs = resources.filter((r) => r.type === "vpc");
+      if (vpcs.length === 0) return [];
+      const { nodes, edges } = buildNetworkDiagram(resources);
+      return [
+        {
+          key: "auto:by-network",
+          name: "Auto: Network Segmentation",
+          description: "VPC/subnet topology across every provider and account, public vs. private.",
+          nodes,
+          edges,
+        },
+      ];
     },
   },
   {

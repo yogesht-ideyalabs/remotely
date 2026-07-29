@@ -423,6 +423,42 @@ export function revokeJoinTokenApi(token: string): Promise<null> {
   return apiFetch(`/api/admin/join-tokens/${encodeURIComponent(token)}`, { method: "DELETE" });
 }
 
+// ---------- admin: bots (machine identity) ----------
+
+export interface BotItem {
+  id: string;
+  roles: string[];
+  createdAt: number;
+  createdBy: string;
+  tokenVersion?: number;
+  lastJoinedAt?: number;
+  lastJoinIp?: string;
+}
+
+export function fetchBots(): Promise<BotItem[]> {
+  return apiFetch("/api/admin/bots");
+}
+
+export function createBotApi(id: string, roles: string[]): Promise<BotItem> {
+  return apiFetch("/api/admin/bots", { method: "POST", body: JSON.stringify({ id, roles }) });
+}
+
+export function updateBotRolesApi(id: string, roles: string[]): Promise<BotItem> {
+  return apiFetch(`/api/admin/bots/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ roles }) });
+}
+
+export function deleteBotApi(id: string): Promise<null> {
+  return apiFetch(`/api/admin/bots/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function createBotJoinTokenApi(id: string, maxUses: number, ttlMinutes: number): Promise<JoinTokenItem> {
+  return apiFetch(`/api/admin/bots/${encodeURIComponent(id)}/join-token`, { method: "POST", body: JSON.stringify({ maxUses, ttlMinutes }) });
+}
+
+export function logoutBotEverywhereApi(id: string): Promise<null> {
+  return apiFetch(`/api/admin/bots/${encodeURIComponent(id)}/logout-everywhere`, { method: "POST" });
+}
+
 // ---------- file transfer (ssh-direct connections + ssh-agent resources) ----------
 // ssh-direct goes through /api/files (real SFTP, the control plane dials
 // directly). ssh-agent goes through /api/agent-files (a request/response

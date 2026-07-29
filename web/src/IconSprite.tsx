@@ -59,6 +59,7 @@ export default function IconSprite() {
         <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l10 17.5H2z" /><line x1="12" y1="10" x2="12" y2="14.5" /><circle cx="12" cy="17.5" r="0.6" fill="currentColor" stroke="none" /></symbol>
         <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M4 9h5V4" /><path d="M20 9h-5V4" /><path d="M4 15h5v5" /><path d="M20 15h-5v5" /></symbol>
         <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3M18.1 5.9l-1.55 1.55M7.45 16.55L5.9 18.1M18.1 18.1l-1.55-1.55M7.45 7.45L5.9 5.9" /></symbol>
+        <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2.5" /><line x1="12" y1="8" x2="12" y2="4.5" /><circle cx="12" cy="3.2" r="1.2" fill="currentColor" stroke="none" /><circle cx="9" cy="14" r="1.4" fill="currentColor" stroke="none" /><circle cx="15" cy="14" r="1.4" fill="currentColor" stroke="none" /><line x1="8" y1="18" x2="16" y2="18" /><line x1="2" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="22" y2="12" /></symbol>
       </defs>
     </svg>
   );

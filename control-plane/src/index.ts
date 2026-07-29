@@ -72,7 +72,7 @@ import {
 } from "./monitors.js";
 import { sendAlertEmail, sendTestEmail } from "./alertEmail.js";
 import { makeRateLimiter } from "./rateLimiter.js";
-import { signToken, verifyTokenLive, signMfaPendingToken, verifyMfaPendingToken, signDownloadToken, verifyDownloadToken } from "./auth.js";
+import { signToken, verifyTokenLive, signMfaPendingToken, verifyMfaPendingToken, signDownloadToken, verifyDownloadToken, signBotToken } from "./auth.js";
 import { requireAuth, requireAdmin, requireAnyAdmin, type AuthedRequest } from "./auth.js";
 import { generateBase32Secret, verifyTotp, otpauthUrl } from "./totp.js";
 import { generateEphemeralKeyPair, issueGrant, checkGrant } from "./sshJit.js";
@@ -107,6 +107,14 @@ import {
   registerAgentIdentity,
   consumeJoinToken,
   getAgentIdentity,
+  joinTokens,
+  listBots,
+  createBot,
+  updateBotRoles,
+  deleteBot,
+  findBot,
+  bumpBotTokenVersion,
+  recordBotJoin,
 } from "./store.js";
 import {
   canAccessResource,
@@ -1601,6 +1609,139 @@ app.delete("/api/admin/join-tokens/:token", requireAuth, requireAdmin, (req: Aut
   }
   logAudit(req.user!.sub, "join_token_revoked", null, "");
   res.status(204).end();
+});
+
+// ---------- REST API: Bots (machine identity — full admin only, same
+// reasoning as agent join tokens: issuing bootstrap credentials is a
+// structural action). See docs/plans/2026-07-29-machine-id-bots.md. ----------
+
+app.get("/api/admin/bots", requireAuth, requireAdmin, (_req, res) => {
+  res.json(listBots());
+});
+
+app.post("/api/admin/bots", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const { id, roles } = req.body ?? {};
+  const botId = String(id ?? "").trim();
+  if (!botId) {
+    res.status(400).json({ error: "id is required" });
+    return;
+  }
+  if (findBot(botId)) {
+    res.status(409).json({ error: "a bot with this id already exists" });
+    return;
+  }
+  const created = createBot(botId, Array.isArray(roles) ? roles.map(String) : [], req.user!.sub);
+  logAudit(req.user!.sub, "bot_created", null, `id=${created.id} roles=${created.roles.join(",")}`);
+  res.status(201).json(created);
+});
+
+app.patch("/api/admin/bots/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const { roles } = req.body ?? {};
+  const updated = updateBotRoles(req.params.id, Array.isArray(roles) ? roles.map(String) : []);
+  if (!updated) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  logAudit(req.user!.sub, "bot_updated", null, `id=${updated.id} roles=${updated.roles.join(",")}`);
+  res.json(updated);
+});
+
+app.delete("/api/admin/bots/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const ok = deleteBot(req.params.id);
+  if (!ok) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  logAudit(req.user!.sub, "bot_deleted", null, `id=${req.params.id}`);
+  res.status(204).end();
+});
+
+// Bootstrap credential for this specific bot — reuses the exact same
+// join-token mechanism agents already use (createJoinToken), scoped via
+// subjectId so this token can only bootstrap this one bot's identity, not
+// any other bot or the agent-join flow. Raw token shown once, same pattern
+// as every other secret-on-creation flow in this app.
+app.post("/api/admin/bots/:id/join-token", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const bot = findBot(req.params.id);
+  if (!bot) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  const { ttlMinutes, maxUses } = req.body ?? {};
+  const created = createJoinToken(
+    req.user!.sub,
+    `bot:${bot.id}`,
+    Number(maxUses) > 0 ? Number(maxUses) : 1,
+    Number(ttlMinutes) > 0 ? Number(ttlMinutes) : 60,
+    bot.id
+  );
+  logAudit(req.user!.sub, "bot_join_token_created", null, `botId=${bot.id} maxUses=${created.maxUses} ttlMinutes=${ttlMinutes ?? 60}`);
+  res.status(201).json(created);
+});
+
+app.post("/api/admin/bots/:id/logout-everywhere", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const updated = bumpBotTokenVersion(req.params.id);
+  if (!updated) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  logAudit(req.user!.sub, "bot_logged_out_everywhere", null, `id=${updated.id}`);
+  res.status(204).end();
+});
+
+// Public — no auth, the join token itself is the credential. Exchanges a
+// single/limited-use bootstrap token for a real, short-lived bot session
+// token (15m — see BOT_TOKEN_TTL in auth.ts), the same shape a human's
+// login response has (roles, tokenVersion baked in), just issued to a
+// machine identity instead of a person.
+app.post("/api/bots/join", (req, res) => {
+  const token = String(req.body?.token ?? "");
+  const clientIp = req.ip;
+  const record = joinTokens.find((j) => j.token === token);
+  if (!record || !record.subjectId) {
+    logAudit("unknown", "bot_join_failed", null, "unknown or non-bot join token");
+    res.status(401).json({ error: "invalid join token" });
+    return;
+  }
+  const result = consumeJoinToken(token);
+  if (!result.ok) {
+    logAudit("unknown", "bot_join_failed", null, `botId=${record.subjectId} reason=${result.reason}`);
+    res.status(401).json({ error: result.reason });
+    return;
+  }
+  const bot = findBot(record.subjectId);
+  if (!bot) {
+    // Bot was deleted after its join token was issued — the token record
+    // still exists (consumeJoinToken doesn't delete it), but there's no
+    // identity left to bootstrap into.
+    res.status(401).json({ error: "bot no longer exists" });
+    return;
+  }
+  recordBotJoin(bot.id, clientIp);
+  const sessionToken = signBotToken(bot.id, bot.roles, bot.tokenVersion);
+  logAudit(`bot:${bot.id}`, "bot_joined", null, `roles=${bot.roles.join(",")}`);
+  res.json({ token: sessionToken, botId: bot.id, roles: bot.roles });
+});
+
+// Rotation — a bot holding a still-valid (unexpired, unrevoked) token can
+// mint a fresh one before it expires, without re-presenting its join
+// token. This is the actual "continuously rotated credential" behavior;
+// requireAuth already rejects an expired or revoked token before this
+// handler ever runs, so reaching here already proves the caller holds a
+// live bot session.
+app.post("/api/bots/refresh", requireAuth, (req: AuthedRequest, res) => {
+  if (!req.user!.isBot) {
+    res.status(403).json({ error: "this endpoint is for bot identities only" });
+    return;
+  }
+  const botId = req.user!.sub.slice(4); // strip "bot:" prefix
+  const bot = findBot(botId);
+  if (!bot) {
+    res.status(401).json({ error: "bot no longer exists" });
+    return;
+  }
+  const sessionToken = signBotToken(bot.id, bot.roles, bot.tokenVersion);
+  res.json({ token: sessionToken, botId: bot.id, roles: bot.roles });
 });
 
 // ---------- REST API: admin — active sessions (live monitoring + termination,

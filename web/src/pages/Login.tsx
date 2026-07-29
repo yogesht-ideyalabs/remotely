@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { startAuthentication } from "@simplewebauthn/browser";
-import { login, verifyLoginMfa, passkeyLoginOptions, passkeyLoginVerify, setSession, getSession } from "../api";
+import { login, verifyLoginMfa, passkeyLoginOptions, passkeyLoginVerify, setSession, getSession, apiFetch } from "../api";
 import ThemeSwitcher from "../ThemeSwitcher";
 
 export default function Login() {
@@ -51,6 +51,28 @@ export default function Login() {
       navigate("/resources");
     } catch (err) {
       setError(err instanceof Error ? err.message : "passkey login failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePasswordlessLogin() {
+    setError(null);
+    setLoading(true);
+    try {
+      // Step 1: get challenge (no username needed — discoverable credential)
+      const { sessionId, options } = await apiFetch("/api/login/passwordless/options", { method: "POST" });
+      // Step 2: browser prompts for passkey
+      const response = await startAuthentication({ optionsJSON: options });
+      // Step 3: verify with server
+      const session = await apiFetch("/api/login/passwordless/verify", {
+        method: "POST",
+        body: JSON.stringify({ sessionId, response }),
+      });
+      setSession(session);
+      navigate("/resources");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "passwordless login failed");
     } finally {
       setLoading(false);
     }
@@ -147,6 +169,9 @@ export default function Login() {
         </button>
         <button type="button" className="secondary" style={{ width: "100%", marginTop: 8 }} onClick={handlePasskeyLogin} disabled={loading}>
           Sign in with a passkey
+        </button>
+        <button type="button" className="secondary passwordless-btn" style={{ width: "100%", marginTop: 8 }} onClick={handlePasswordlessLogin} disabled={loading}>
+          🔐 Passwordless sign-in (no username needed)
         </button>
         <div className="hint">
           Demo accounts — <b>admin</b> / admin123 (sees all resources), <b>alice</b> / alice123

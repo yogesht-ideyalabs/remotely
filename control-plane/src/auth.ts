@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
-import { findUser, getSecurityPolicy } from "./store.js";
+import { findUser, findBot, getSecurityPolicy } from "./store.js";
 import { resolveRoles, isAnyAdmin } from "./rbac.js";
 import { ipInCidr } from "./cidr.js";
 
@@ -9,18 +9,33 @@ import { ipInCidr } from "./cidr.js";
 // password-derived JWT signed with a static secret.
 const JWT_SECRET = process.env.JWT_SECRET ?? "remotely-poc-dev-secret-do-not-use-in-prod";
 const TOKEN_TTL = "8h";
+// Machine identities get a much shorter TTL than humans by design — the
+// "continuously rotated" behavior comes from POST /api/bots/refresh being
+// called periodically, not from one long-lived credential. See
+// docs/plans/2026-07-29-machine-id-bots.md.
+const BOT_TOKEN_TTL = "15m";
 
 export interface TokenPayload {
-  sub: string; // username
+  sub: string; // username, or "bot:<botId>" for a machine identity
   roles: string[];
   // Absent (undefined) is treated as 0 on both sides of the comparison in
   // verifyTokenLive — a token signed before tokenVersion existed at all
   // still compares correctly against a User row that also predates it.
   tokenVersion?: number;
+  // Set only on bot-issued tokens — see verifyTokenLive's bot branch below.
+  isBot?: boolean;
 }
 
 export function signToken(payload: TokenPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_TTL });
+}
+
+// Bot identity is a separate signing function (own TTL) rather than a
+// parameter on signToken, so none of the 4 existing human-login call sites
+// need to change at all.
+export function signBotToken(botId: string, roles: string[], tokenVersion?: number): string {
+  const payload: TokenPayload = { sub: `bot:${botId}`, roles, tokenVersion, isBot: true };
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: BOT_TOKEN_TTL });
 }
 
 export function verifyToken(token: string): TokenPayload | null {
@@ -38,13 +53,26 @@ export function verifyToken(token: string): TokenPayload | null {
 // user's live roles in the same lookup, same reasoning requireAuth always
 // used: a role grant/revoke must take effect on the very next request, not
 // only after a fresh login. Every one of this app's independent
-// token-verification call sites (requireAuth here, plus the 7 WS-session
+// token-verification call sites (requireAuth here, plus the 8 WS-session
 // upgrade handlers in index.ts) goes through this now, not raw
 // verifyToken — the same class of gap the tenth-pass fix (stale-JWT-
 // trusted-roles) closed at every one of those sites, not just requireAuth.
+//
+// Bot tokens (isBot: true) branch to the Bot store instead of the User
+// store, otherwise identical revocation/live-roles logic — this is the
+// ONLY place bot-awareness lives; every call site downstream of this
+// function (SSH/RDP/VNC/database/Kubernetes sessions, every admin route)
+// gets machine-identity support for free, with zero further changes.
 export function verifyTokenLive(token: string): TokenPayload | null {
   const payload = verifyToken(token);
   if (!payload) return null;
+  if (payload.isBot) {
+    const botId = payload.sub.startsWith("bot:") ? payload.sub.slice(4) : payload.sub;
+    const bot = findBot(botId);
+    if (!bot) return null;
+    if ((payload.tokenVersion ?? 0) !== (bot.tokenVersion ?? 0)) return null;
+    return { sub: payload.sub, roles: bot.roles, tokenVersion: bot.tokenVersion, isBot: true };
+  }
   const user = findUser(payload.sub);
   if (!user) return null;
   if ((payload.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) return null;
