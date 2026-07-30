@@ -168,6 +168,20 @@ function DiagramEditorInner() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const editorPageRef = useRef<HTMLDivElement>(null);
 
+  // Close any open modal on Escape key
+  useEffect(() => {
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (showLoadModal) setShowLoadModal(false);
+        else if (showImportModal) setShowImportModal(false);
+        else if (showShareModal) setShowShareModal(false);
+        else if (historyDiagram) setHistoryDiagram(null);
+      }
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [showLoadModal, showImportModal, showShareModal, historyDiagram]);
+
   // ─── Multi-page diagrams ────────────────────────────────────────────────
   // Only the active page's content lives in React Flow's own nodes/edges
   // state at any moment; the rest sit here as plain snapshots. Switching

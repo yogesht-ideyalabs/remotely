@@ -136,16 +136,22 @@ export default function Monitoring() {
       <div className="monitoring-header">
         <h1>📊 Monitoring</h1>
         <div className="monitoring-controls">
-          <select value={selectedHost} onChange={(e) => setSelectedHost(e.target.value)}>
-            {hosts.length === 0 && <option value="">No hosts reporting yet</option>}
-            {hosts.map((h) => <option key={h} value={h}>{h}</option>)}
-          </select>
-          <div className="time-range-picker">
-            {TIME_RANGES.map((r) => (
-              <button key={r.value} className={timeRange === r.value ? "active" : ""} onClick={() => setTimeRange(r.value)}>
-                {r.label}
-              </button>
-            ))}
+          <div className="monitoring-control-group">
+            <label className="monitoring-control-label">Host</label>
+            <select value={selectedHost} onChange={(e) => setSelectedHost(e.target.value)}>
+              {hosts.length === 0 && <option value="">No hosts reporting yet</option>}
+              {hosts.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          <div className="monitoring-control-group">
+            <label className="monitoring-control-label">Time Range</label>
+            <div className="time-range-picker">
+              {TIME_RANGES.map((r) => (
+                <button key={r.value} className={timeRange === r.value ? "active" : ""} onClick={() => setTimeRange(r.value)}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -272,7 +278,7 @@ function MetricCard({ label, value, unit, color }: { label: string; value: numbe
 function MiniChart({ name, series }: { name: string; series: MetricSeries[] }) {
   const allPoints = series.flatMap((s) => s.points);
   if (allPoints.length === 0) return (
-    <div className="mini-chart"><h4>{formatMetricName(name)}</h4><p className="empty-state">No data</p></div>
+    <div className="mini-chart"><div className="mini-chart-header"><h4>{formatMetricName(name)}</h4></div><p className="empty-state" style={{ padding: "20px 0" }}>No data</p></div>
   );
 
   const maxVal = Math.max(...allPoints.map((p) => p.value), 1);
@@ -280,13 +286,21 @@ function MiniChart({ name, series }: { name: string; series: MetricSeries[] }) {
   const range = maxVal - minVal || 1;
   const width = 600;
   const height = 120;
+  const padTop = 10;
+  const padBot = 10;
+  const usableHeight = height - padTop - padBot;
 
   // Build SVG path
   const pathD = allPoints.map((p, i) => {
-    const x = (i / (allPoints.length - 1)) * width;
-    const y = height - ((p.value - minVal) / range) * (height - 20) - 10;
-    return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+    const x = (i / Math.max(allPoints.length - 1, 1)) * width;
+    const y = padTop + usableHeight - ((p.value - minVal) / range) * usableHeight;
+    return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
   }).join(" ");
+
+  // Fill area path (same line + close at bottom)
+  const firstX = 0;
+  const lastX = width;
+  const fillD = `${pathD} L ${lastX} ${height} L ${firstX} ${height} Z`;
 
   return (
     <div className="mini-chart">
@@ -294,8 +308,15 @@ function MiniChart({ name, series }: { name: string; series: MetricSeries[] }) {
         <h4>{formatMetricName(name)}</h4>
         <span className="mini-chart-latest">{allPoints[allPoints.length - 1]?.value.toFixed(1)}</span>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="mini-chart-svg">
-        <path d={pathD} fill="none" stroke="var(--accent)" strokeWidth="2" />
+      <svg viewBox={`0 0 ${width} ${height}`} className="mini-chart-svg" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={`grad-${name}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={fillD} fill={`url(#grad-${name})`} />
+        <path d={pathD} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       <div className="mini-chart-range"><span>{minVal.toFixed(1)}</span><span>{maxVal.toFixed(1)}</span></div>
     </div>
