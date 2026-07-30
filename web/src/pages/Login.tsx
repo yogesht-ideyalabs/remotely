@@ -138,52 +138,54 @@ export default function Login() {
         <ThemeSwitcher />
       </div>
       <form className="login-card" onSubmit={handleSubmit}>
-        <h1>Remotely</h1>
-        <p>Sign in to browse and connect to your infrastructure</p>
+        <div className="login-brand">
+          <span className="login-dot" />
+          <h1>Remotely</h1>
+        </div>
+        <p className="login-sub">Sign in to your infrastructure</p>
+
         {error && <div className="error-banner">{error}</div>}
-        <input
-          placeholder="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          autoFocus
-        />
-        <input
-          placeholder="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <button className="primary" disabled={loading}>
-          {loading ? "Signing in..." : "Sign in"}
-        </button>
-        <div className="login-divider">or</div>
-        <button
-          type="button"
-          className="secondary"
-          style={{ width: "100%" }}
-          onClick={() => {
-            window.location.href = "/api/auth/oidc/login";
-          }}
-        >
-          Sign in with SSO
-        </button>
-        <button type="button" className="secondary" style={{ width: "100%", marginTop: 8 }} onClick={handlePasskeyLogin} disabled={loading}>
-          Sign in with a passkey
-        </button>
-        <button type="button" className="secondary passwordless-btn" style={{ width: "100%", marginTop: 8 }} onClick={handlePasswordlessLogin} disabled={loading}>
-          🔐 Passwordless sign-in (no username needed)
-        </button>
-        <div className="hint">
-          Demo accounts — <b>admin</b> / admin123 (sees all resources), <b>alice</b> / alice123
-          (scoped to Client A / acme-corp only). SSO demo — <b>jane.doe@remotely.dev</b> / ssopass123 (new account,
-          provisioned on first login with no roles). Passkey: enter your username above, then use a passkey
-          registered on your Profile page instead of a password.
+
+        <div className="login-fields">
+          <input
+            placeholder="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoFocus
+          />
+          <input
+            placeholder="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button className="primary" disabled={loading}>
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
         </div>
-        <div className="hint" style={{ marginTop: 8 }}>
-          <a href="/status" target="_blank" rel="noreferrer">
-            System status →
-          </a>
+
+        <div className="login-divider">or continue with</div>
+
+        <div className="login-alt-methods">
+          <button type="button" className="login-alt-btn" onClick={() => { window.location.href = "/api/auth/oidc/login"; }}>
+            <span className="login-alt-icon">🏢</span> SSO
+          </button>
+          <button type="button" className="login-alt-btn" onClick={handlePasskeyLogin} disabled={loading}>
+            <span className="login-alt-icon">🔑</span> Passkey
+          </button>
+          <button type="button" className="login-alt-btn" onClick={handlePasswordlessLogin} disabled={loading}>
+            <span className="login-alt-icon">🔐</span> Passwordless
+          </button>
         </div>
+
+        <details className="login-demo-hint">
+          <summary>Demo credentials</summary>
+          <div className="login-demo-accounts">
+            <span><b>admin</b> / admin123 — full access</span>
+            <span><b>alice</b> / alice123 — scoped to acme-corp</span>
+            <span><b>bob</b> / bob1234567 — direct assignment only</span>
+          </div>
+        </details>
       </form>
     </div>
   );
