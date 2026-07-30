@@ -41,14 +41,30 @@ echo ""
 
 # Determine script directory (where the binary is)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Binary is in the dist-linux-x64/ sibling directory (tar layout)
+DIST_DIR="$SCRIPT_DIR/../dist-linux-x64"
+# Fallback: binary might be in the same directory (flat layout)
+if [ ! -f "$DIST_DIR/remotely-agent" ]; then
+  DIST_DIR="$SCRIPT_DIR"
+fi
+if [ ! -f "$DIST_DIR/remotely-agent" ]; then
+  echo "ERROR: Cannot find remotely-agent binary."
+  echo "Expected at: $SCRIPT_DIR/../dist-linux-x64/remotely-agent"
+  echo "Or at: $SCRIPT_DIR/remotely-agent"
+  echo ""
+  echo "Make sure you extracted the full archive first:"
+  echo "  tar xzf remotely-agent-linux-x64.tar.gz"
+  echo "  cd dist-linux-x64 && sudo ../scripts/install-linux.sh --url ..."
+  exit 1
+fi
 
 # Install
 echo "[1/4] Creating install directory..."
 mkdir -p "$INSTALL_DIR/native"
 
 echo "[2/4] Copying agent binary..."
-cp "$SCRIPT_DIR/remotely-agent" "$INSTALL_DIR/remotely-agent"
-cp "$SCRIPT_DIR/native/pty.node" "$INSTALL_DIR/native/pty.node"
+cp "$DIST_DIR/remotely-agent" "$INSTALL_DIR/remotely-agent"
+cp "$DIST_DIR/native/pty.node" "$INSTALL_DIR/native/pty.node"
 chmod +x "$INSTALL_DIR/remotely-agent"
 
 echo "[3/4] Creating systemd service..."
