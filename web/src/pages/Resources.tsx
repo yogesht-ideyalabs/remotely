@@ -52,17 +52,33 @@ export default function Resources() {
 
   return (
     <div>
-      <h2 className="page-title">Resources</h2>
-      <p className="page-sub">
-        Only resources your role can see appear here — this list is filtered server-side, the
-        same way a real deployment hides entire tenants from each other, not just denies access.
-      </p>
-      <input
-        placeholder="Search by name, folder, label, or type..."
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        style={{ maxWidth: 420, marginBottom: 20 }}
-      />
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Resources</h2>
+          <p className="page-sub">
+            Connect to your infrastructure — only resources your role permits appear here.
+          </p>
+        </div>
+      </div>
+
+      <div className="resource-toolbar">
+        <div className="resource-search-wrap">
+          <span className="resource-search-icon">🔍</span>
+          <input
+            className="resource-search"
+            placeholder="Search by name, folder, label, or type..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button className="resource-search-clear" onClick={() => setQuery("")}>✕</button>
+          )}
+        </div>
+        {filtered && (
+          <span className="resource-count">{filtered.length} resource{filtered.length !== 1 ? "s" : ""}</span>
+        )}
+      </div>
+
       {error && <div className="error-banner">{error}</div>}
       {resources === null && <Skeleton lines={5} />}
       {filtered && filtered.length === 0 && resources && resources.length > 0 && (
@@ -71,51 +87,56 @@ export default function Resources() {
       {resources && resources.length === 0 && getSession()?.isAdmin && (
         <EmptyState
           icon="resources"
-          message="Nothing here yet — this is what a fresh install looks like. Add a connection (SSH, RDP, VNC, a database, or a Kubernetes pod) to get started, or deploy an agent to have a client network report in on its own."
+          message="Nothing here yet. Add a connection (SSH, RDP, VNC, Database, or Kubernetes) or deploy an agent."
           action={{ label: "Go to Connections →", onClick: () => navigate("/admin/connections") }}
         />
       )}
       {resources && resources.length === 0 && !getSession()?.isAdmin && (
-        <EmptyState icon="resources" message="No resources visible to your current role yet — ask an admin to grant you access." />
+        <EmptyState icon="resources" message="No resources visible to your current role — ask an admin to grant access." />
       )}
+
       {groups &&
         groups.map(([folder, items]) => (
-          <div key={folder} style={{ marginBottom: 28 }}>
-            <h3 style={{ fontSize: 13, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>
-              {folder} <span style={{ opacity: 0.6 }}>({items.length})</span>
+          <div key={folder} className="resource-folder-group">
+            <h3 className="resource-folder-title">
+              {folder} <span className="resource-folder-count">{items.length}</span>
             </h3>
             <div className="resource-grid">
               {items.map((r) => (
-                <div className="resource-card" key={r.id}>
-                  <div className="host">
-                    <span className="dot" />
-                    {r.hostname}
-                    <span className="label-chip">{r.type}</span>
+                <div className="resource-card" key={r.id} onClick={() => navigate(connectPath(r))}>
+                  <div className="resource-card-top">
+                    <span className="resource-type-icon">{typeIcon(r.type)}</span>
+                    <div className="resource-card-info">
+                      <span className="resource-hostname">{r.hostname}</span>
+                      <span className="resource-type-label">{r.type}</span>
+                    </div>
+                    <span className="resource-status-dot" />
                   </div>
-                  <div className="labels">
-                    {Object.entries(r.labels).map(([k, v]) => (
-                      <span className="label-chip" key={k}>
-                        {k}={v}
-                      </span>
-                    ))}
+                  {Object.keys(r.labels).length > 0 && (
+                    <div className="labels">
+                      {Object.entries(r.labels).slice(0, 4).map(([k, v]) => (
+                        <span className="label-chip" key={k}>{k}={v}</span>
+                      ))}
+                      {Object.keys(r.labels).length > 4 && (
+                        <span className="label-chip">+{Object.keys(r.labels).length - 4}</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="resource-card-actions" onClick={(e) => e.stopPropagation()}>
+                    <button className="connect-btn connect-btn-primary" onClick={() => navigate(connectPath(r))}>
+                      Connect
+                    </button>
+                    {(r.type === "ssh-direct" || r.type === "ssh-agent") && (
+                      <button className="connect-btn" onClick={() => navigate(`/files/${r.id}${r.type === "ssh-agent" ? "?kind=ssh-agent" : ""}`)}>
+                        Files
+                      </button>
+                    )}
+                    {r.type === "kubernetes" && (
+                      <button className="connect-btn" onClick={() => navigate(`/k8s/${r.id}`)}>
+                        Browse
+                      </button>
+                    )}
                   </div>
-                  <button className="connect-btn connect-btn-primary" onClick={() => navigate(connectPath(r))}>
-                    Connect →
-                  </button>
-                  {(r.type === "ssh-direct" || r.type === "ssh-agent") && (
-                    <button
-                      className="connect-btn"
-                      style={{ marginTop: 6 }}
-                      onClick={() => navigate(`/files/${r.id}${r.type === "ssh-agent" ? "?kind=ssh-agent" : ""}`)}
-                    >
-                      Files
-                    </button>
-                  )}
-                  {r.type === "kubernetes" && (
-                    <button className="connect-btn" style={{ marginTop: 6 }} onClick={() => navigate(`/k8s/${r.id}`)}>
-                      Browse Cluster
-                    </button>
-                  )}
                 </div>
               ))}
             </div>
@@ -123,4 +144,18 @@ export default function Resources() {
         ))}
     </div>
   );
+}
+
+
+function typeIcon(type: string): string {
+  const icons: Record<string, string> = {
+    "ssh-agent": "🖥️",
+    "ssh-direct": "💻",
+    "rdp": "🪟",
+    "vnc": "🖥️",
+    "database": "🗄️",
+    "kubernetes": "☸️",
+    "terraform": "🏗️",
+  };
+  return icons[type] || "📦";
 }
