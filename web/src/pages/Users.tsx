@@ -166,12 +166,20 @@ export default function Users() {
 
   return (
     <div>
-      <h2 className="page-title">Users</h2>
-      <p className="page-sub">
-        Create users and assign one or more roles — permissions are the union of every assigned role's allows, minus
-        any of their denies.
-        {!session?.isAdmin && session?.isDelegatedAdmin && " You're a delegated admin: scoped to your own organization, can't grant admin roles."}
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Users</h2>
+          <p className="page-sub">
+            Manage users and role assignments. Permissions = union of all assigned roles.
+            {!session?.isAdmin && session?.isDelegatedAdmin && " (Delegated admin: scoped to your org)"}
+          </p>
+        </div>
+        {!creating && (
+          <button className="primary" style={{ width: "auto", padding: "8px 16px" }} onClick={() => setCreating(true)}>
+            + New User
+          </button>
+        )}
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
       {creating && (

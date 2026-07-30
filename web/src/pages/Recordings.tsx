@@ -77,11 +77,12 @@ export default function Recordings() {
 
   return (
     <div>
-      <h2 className="page-title">Session Recordings</h2>
-      <p className="page-sub">
-        Every session — SSH, RDP, and database — is captured with timing and fully replayable below. Filter and
-        clean up what you don't need.
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Session Recordings</h2>
+          <p className="page-sub">Captured sessions with full replay. Filter by user, resource, or type.</p>
+        </div>
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
       <div className="form-row">

@@ -131,11 +131,19 @@ export default function Roles() {
 
   return (
     <div>
-      <h2 className="page-title">Roles</h2>
-      <p className="page-sub">
-        Every permission dimension is enforced server-side on connect: label allow/deny, resource type, login
-        allowlist, session TTL, and source-IP CIDR. Grouped by category, purely for organizing this list.
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Roles</h2>
+          <p className="page-sub">
+            Access control rules — label matching, resource types, session limits, IP restrictions.
+          </p>
+        </div>
+        {editing === null && (
+          <button className="primary" style={{ width: "auto", padding: "8px 16px" }} onClick={() => { setEditing(""); setForm(emptyForm); }}>
+            + New Role
+          </button>
+        )}
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
       {editing !== null && (

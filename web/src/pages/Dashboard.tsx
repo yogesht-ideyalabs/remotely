@@ -57,15 +57,15 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+      <div className="page-header-row">
         <div>
           <h2 className="page-title">Dashboard</h2>
-          <p className="page-sub">Live snapshot, computed from the same audit log and session state everything else here uses. Add, remove, reorder, and resize widgets to make it yours.</p>
+          <p className="page-sub">Live overview of your infrastructure. Add, remove, reorder, and resize widgets.</p>
         </div>
-        <button className={editing ? "primary" : "secondary"} style={{ width: "auto", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => setEditing((e) => !e)}>
-          {editing ? "Done editing" : (
+        <button className={editing ? "primary" : "secondary"} style={{ width: "auto", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px" }} onClick={() => setEditing((e) => !e)}>
+          {editing ? "✓ Done" : (
             <>
-              <Icon name="pen" size={13} /> Edit dashboard
+              <Icon name="pen" size={13} /> Edit
             </>
           )}
         </button>

@@ -54,10 +54,12 @@ export default function Audit() {
 
   return (
     <div>
-      <h2 className="page-title">Audit Log</h2>
-      <p className="page-sub">
-        Structured, append-only event log — every login, denial, and session start/end. Admin-only.
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Audit Log</h2>
+          <p className="page-sub">Append-only event log — logins, denials, sessions, admin actions. Hash-chained for tamper detection.</p>
+        </div>
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
       <div className="form-row">

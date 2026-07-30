@@ -71,12 +71,12 @@ export default function Organizations() {
 
   return (
     <div>
-      <h2 className="page-title">Organizations</h2>
-      <p className="page-sub">
-        This is the top-level structure everything else hangs off — users and connections are tagged with an
-        organization, roles scope delegated admins to one, and RBAC labels commonly key off it (<code>client</code>
-        ). Expand a row to set white-label branding or see usage & SLA metrics.
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Organizations</h2>
+          <p className="page-sub">Tenants — users, connections, and RBAC scoped per org. Expand for branding and usage.</p>
+        </div>
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
       {creating && (

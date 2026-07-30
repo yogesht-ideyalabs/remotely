@@ -72,11 +72,12 @@ export default function AgentHealth() {
 
   return (
     <div>
-      <h2 className="page-title">Agent Health</h2>
-      <p className="page-sub">
-        Live reverse-tunnel agents (the ssh-agent kind) — connection uptime, last heartbeat, and approximate latency.
-        Refreshes every 10s. Directly-dialed connections (ssh-direct/rdp/database) aren't agents and don't appear here.
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Agent Health</h2>
+          <p className="page-sub">Live reverse-tunnel agents — uptime, heartbeat, latency. Refreshes every 10s.</p>
+        </div>
+      </div>
       {error && <div className="error-banner">{error}</div>}
       {agents === null && <Skeleton lines={4} />}
       {agents && agents.length === 0 && (

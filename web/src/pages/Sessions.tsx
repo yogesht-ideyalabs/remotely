@@ -44,12 +44,12 @@ export default function Sessions() {
 
   return (
     <div>
-      <h2 className="page-title">Active Sessions</h2>
-      <p className="page-sub">
-        Every currently open session, across SSH/RDP/database, live monitoring + forced termination. Refreshes every
-        8s. "Jump in" opens a fresh session to the same resource — it doesn't reattach to this exact live session
-        (that would need session persistence, which isn't built).
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Active Sessions</h2>
+          <p className="page-sub">Live sessions across all protocols. Watch, terminate, or jump in. Refreshes every 8s.</p>
+        </div>
+      </div>
       {error && <div className="error-banner">{error}</div>}
       {!sessions && <Skeleton lines={3} />}
       {sessions && sessions.length === 0 && <div className="empty-state">No active sessions right now.</div>}

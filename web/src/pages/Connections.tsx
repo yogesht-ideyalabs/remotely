@@ -297,12 +297,19 @@ export default function Connections() {
 
   return (
     <div>
-      <h2 className="page-title">Connections</h2>
-      <p className="page-sub">
-        Add a connection with a host and credentials — it's connectable immediately, no agent to deploy. Grouped by
-        folder; assign a whole folder or a single connection directly to specific users, independent of roles.
-        (SSH-agent resources, the reverse-tunnel kind, register themselves and don't show up here.)
-      </p>
+      <div className="page-header-row">
+        <div>
+          <h2 className="page-title">Connections</h2>
+          <p className="page-sub">
+            Managed targets — add host + credentials, connect immediately. Grouped by folder.
+          </p>
+        </div>
+        {editing === null && (
+          <button className="primary" style={{ width: "auto", padding: "8px 16px" }} onClick={() => { setEditing(""); setForm(emptyForm); }}>
+            + New Connection
+          </button>
+        )}
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
       {editing !== null && (
