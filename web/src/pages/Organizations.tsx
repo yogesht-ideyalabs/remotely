@@ -10,6 +10,7 @@ import {
   type OrgUsage,
 } from "../api";
 import { FieldLabel } from "../components/FieldLabel";
+import { Skeleton } from "../components/Skeleton";
 
 const BRAND_COLORS = ["#5b8cff", "#a26bff", "#22c07d", "#e0a325", "#ef4444", "#14b8a6", "#ec4899", "#6366f1"];
 
@@ -119,6 +120,7 @@ export default function Organizations() {
         </button>
       )}
 
+      {!orgs && <Skeleton lines={3} />}
       {orgs && (
         <div className="admin-table-wrap">
           <table className="audit-table">

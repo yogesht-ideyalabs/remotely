@@ -14,6 +14,7 @@ import {
 } from "../api";
 import { useOrgFilter } from "../OrgContext";
 import { FieldLabel } from "../components/FieldLabel";
+import { Skeleton } from "../components/Skeleton";
 
 export default function Users() {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
@@ -325,6 +326,7 @@ export default function Users() {
         </div>
       )}
 
+      {!visibleUsers && <Skeleton lines={4} />}
       {visibleUsers && (
         <div className="admin-table-wrap">
           <table className="audit-table">

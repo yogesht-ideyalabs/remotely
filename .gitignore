@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-linux-x64/
 dist-windows-x64/
+.download-cache/
 *.db
 *.db-shm
 *.db-wal

@@ -10,24 +10,10 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "../api";
 
-interface SlackConfig {
-  enabled: boolean;
-  configured: boolean;
-  channelId?: string;
-  approvalTtlMinutes?: number;
-}
-
-interface ChatOpsConfig {
-  pagerduty: { enabled: boolean; routingKey?: string; approvalTtlMinutes?: number } | null;
-  teams: { enabled: boolean; webhookUrl?: string; approvalTtlMinutes?: number } | null;
-  discord: { enabled: boolean; webhookUrl?: string; approvalTtlMinutes?: number } | null;
-}
-
 export default function ChatOps() {
-  const [slack, setSlack] = useState<SlackConfig | null>(null);
-  const [chatops, setChatops] = useState<ChatOpsConfig | null>(null);
   const [saving, setSaving] = useState("");
   const [message, setMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   // Slack form
   const [slackEnabled, setSlackEnabled] = useState(false);
@@ -62,8 +48,6 @@ export default function ChatOps() {
         apiFetch("/api/admin/integrations/slack"),
         apiFetch("/api/admin/integrations/chatops"),
       ]);
-      setSlack(s);
-      setChatops(c);
       if (s) {
         setSlackEnabled(s.enabled);
         setSlackChannelId(s.channelId || "");
@@ -84,7 +68,9 @@ export default function ChatOps() {
         setDiscordWebhookUrl(c.discord.webhookUrl || "");
         setDiscordTtl(c.discord.approvalTtlMinutes || 60);
       }
-    } catch {}
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "failed to load configuration");
+    }
   }
 
   async function saveSlack() {
@@ -154,7 +140,19 @@ export default function ChatOps() {
         Configure where access request notifications are sent. Reviewers can approve or deny
         directly from their preferred platform.
       </p>
+      <p className="page-desc" style={{ fontSize: 12, opacity: 0.8 }}>
+        Looking for generic outbound webhooks instead — a signed HTTP POST to any URL, filtered by event type,
+        without interactive approve/deny buttons? That's <a href="/admin/plugins">Plugins</a>. Use ChatOps here for
+        Slack/PagerDuty/Teams/Discord's native approval UX; use Plugins for everything else, including sending
+        Slack messages via a plain Incoming Webhook.
+      </p>
 
+      {loadError && (
+        <div className="error-banner">
+          Failed to load current configuration: {loadError}. Forms below show defaults, not your saved settings —
+          reload the page before making changes.
+        </div>
+      )}
       {message && <div className="info-banner">{message}</div>}
 
       {/* Slack */}

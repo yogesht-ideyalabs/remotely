@@ -36,6 +36,10 @@ import Features from "./pages/Features";
 import ChatOps from "./pages/ChatOps";
 import KubernetesBrowser from "./pages/KubernetesBrowser";
 import Bots from "./pages/Bots";
+import ModeratedSessions from "./pages/ModeratedSessions";
+import Status from "./pages/Status";
+import SsoConfig from "./pages/SsoConfig";
+import InstallAgent from "./pages/InstallAgent";
 
 export default function App() {
   return (
@@ -44,6 +48,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/sso-callback" element={<SsoCallback />} />
         <Route path="/share/:token" element={<SharedDiagram />} />
+        <Route path="/status" element={<Status />} />
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/resources" replace />} />
           <Route path="/resources" element={<Resources />} />
@@ -76,6 +81,9 @@ export default function App() {
           <Route path="/admin/monitors" element={<Monitors />} />
           <Route path="/admin/security-policy" element={<SecurityPolicy />} />
           <Route path="/admin/bots" element={<Bots />} />
+          <Route path="/admin/moderated-sessions" element={<ModeratedSessions />} />
+          <Route path="/admin/sso-config" element={<SsoConfig />} />
+          <Route path="/admin/install-agent" element={<InstallAgent />} />
           <Route path="/features" element={<Features />} />
           <Route path="/admin/chatops" element={<ChatOps />} />
           <Route path="/k8s/:connectionId" element={<KubernetesBrowser />} />

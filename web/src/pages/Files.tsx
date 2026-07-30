@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { fetchFileList, fileDownloadUrl, uploadFile, type FileEntry, type FileTransferKind } from "../api";
+import { Skeleton } from "../components/Skeleton";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -98,6 +99,7 @@ export default function Files() {
           </div>
         </div>
         {error && <div className="error-banner">{error}</div>}
+        {!entries && <Skeleton lines={3} />}
         {entries && (
           <table className="audit-table">
             <thead>

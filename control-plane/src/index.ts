@@ -4,6 +4,8 @@ import bcrypt from "bcryptjs";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import net from "node:net";
+import { execFileSync } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { Client as SSHClient } from "ssh2";
 import { createDbClient } from "./dbClients.js";
@@ -76,7 +78,7 @@ import { signToken, verifyTokenLive, signMfaPendingToken, verifyMfaPendingToken,
 import { requireAuth, requireAdmin, requireAnyAdmin, type AuthedRequest } from "./auth.js";
 import { generateBase32Secret, verifyTotp, otpauthUrl } from "./totp.js";
 import { generateEphemeralKeyPair, issueGrant, checkGrant } from "./sshJit.js";
-import { buildAuthorizationUrl, completeLogin } from "./oidc.js";
+import { buildAuthorizationUrl, completeLogin, getOidcConfigSummary } from "./oidc.js";
 import { deliverToSiem, initSiemExport } from "./siemExport.js";
 import { getComplianceReport } from "./compliance.js";
 import { deliverToPlugin, initPluginSystem } from "./pluginSystem.js";
@@ -210,6 +212,21 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+// Public, unauthenticated by design (same reasoning as /api/health) — this
+// is the "is the system itself alive and how big is it" surface, not
+// tenant data. No connection details, no hostnames, no usernames, just
+// counts.
+app.get("/api/status", (_req, res) => {
+  res.json({
+    status: "ok",
+    version: process.env.npm_package_version ?? "0.1.0",
+    nodeVersion: process.version,
+    uptimeSeconds: Math.floor(process.uptime()),
+    connectedAgents: agents.size,
+    activeSessions: sessions.size + otherSessions.size,
+  });
+});
+
 // ---------- Login rate limiting ----------
 // Keyed by IP+username so a distributed attack across many IPs against one
 // account still gets throttled per-account, and one IP hammering many
@@ -219,7 +236,10 @@ app.get("/api/health", (_req, res) => {
 // and forwards X-Forwarded-For — without that, every request behind a
 // proxy shares one IP bucket. The username half of the key still limits
 // blind-guessing against one account even in that case.
-const loginLimiter = makeRateLimiter({ windowMs: 15 * 60 * 1000, maxAttempts: 5, lockoutMs: 15 * 60 * 1000 });
+const loginLimiter = makeRateLimiter(() => {
+  const policy = getSecurityPolicy();
+  return { windowMs: policy.loginWindowMinutes * 60 * 1000, maxAttempts: policy.loginMaxAttempts, lockoutMs: policy.loginLockoutMinutes * 60 * 1000 };
+});
 
 function loginRateLimitKey(ip: string | undefined, username: string): string {
   return `${ip ?? "unknown"}:${username.toLowerCase()}`;
@@ -937,7 +957,9 @@ function connectionFromBody(id: string, body: Record<string, unknown>, createdBy
     k8sNamespace: body.k8sNamespace ? String(body.k8sNamespace) : undefined,
     k8sPodName: body.k8sPodName ? String(body.k8sPodName) : undefined,
     k8sContainerName: body.k8sContainerName ? String(body.k8sContainerName) : undefined,
-    dbEngine: body.dbEngine === "mysql" ? "mysql" : body.dbEngine === "postgres" ? "postgres" : undefined,
+    dbEngine: (["postgres", "mysql", "mongodb", "redis"] as const).includes(body.dbEngine as never)
+      ? (body.dbEngine as "postgres" | "mysql" | "mongodb" | "redis")
+      : undefined,
   };
 }
 
@@ -956,6 +978,84 @@ app.post("/api/admin/connections", requireAuth, requireAnyAdmin, (req: AuthedReq
   const conn = createConnection(connectionFromBody(id, req.body, req.user!.sub, Date.now()));
   logAudit(req.user!.sub, "connection_created", conn.id, `type=${conn.type} hostname=${conn.hostname}`);
   res.status(201).json(conn);
+});
+
+// A plain "can I reach host:port" probe — the honest baseline check for
+// protocols where a full handshake test is disproportionate to build here
+// (RDP/VNC go through guacd's own multi-step negotiation). Real TCP
+// connect, not a ping — confirms something is actually listening, which is
+// most of what "did I typo the host/port" actually needs.
+function tcpProbe(host: string, port: number, timeoutMs = 5000): Promise<{ ok: boolean; message: string }> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port, timeout: timeoutMs });
+    const done = (ok: boolean, message: string) => {
+      socket.destroy();
+      resolve({ ok, message });
+    };
+    socket.on("connect", () => done(true, `Connected to ${host}:${port}`));
+    socket.on("timeout", () => done(false, `Timed out connecting to ${host}:${port} after ${timeoutMs}ms`));
+    socket.on("error", (err) => done(false, `Could not reach ${host}:${port} — ${(err as Error).message}`));
+  });
+}
+
+// Tests connectivity for a connection's real fields BEFORE it's saved — the
+// form posts the same shape /api/admin/connections would, this just never
+// persists it. Reuses the exact same dial logic each real session uses
+// (sshClientFor, createDbClient, loadKubeConfig+listNamespaces), not a
+// separate simplified path that could pass while the real thing fails.
+app.post("/api/admin/connections/test", requireAuth, requireAnyAdmin, async (req: AuthedRequest, res) => {
+  const started = Date.now();
+  const draft = connectionFromBody("test-draft", req.body ?? {}, req.user!.sub, Date.now());
+  if (!draft.host || !draft.port) {
+    res.json({ ok: false, message: "Host and port are required to test a connection." });
+    return;
+  }
+  try {
+    if (draft.type === "ssh-direct") {
+      const client = await sshClientFor(draft);
+      client.end();
+      res.json({ ok: true, message: `SSH authentication succeeded as "${draft.username}".`, latencyMs: Date.now() - started });
+      return;
+    }
+    if (draft.type === "database") {
+      const client = createDbClient(draft.dbEngine ?? "postgres", {
+        host: draft.host,
+        port: draft.port,
+        user: draft.username,
+        password: draft.password,
+        database: draft.databaseName,
+        connectTimeoutMs: 8000,
+      });
+      await client.connect();
+      await client.end();
+      res.json({ ok: true, message: `Connected and authenticated to ${draft.dbEngine ?? "postgres"} at ${draft.host}:${draft.port}.`, latencyMs: Date.now() - started });
+      return;
+    }
+    if (draft.type === "kubernetes") {
+      if (!draft.kubeconfig) {
+        res.json({ ok: false, message: "No kubeconfig provided." });
+        return;
+      }
+      const kc = loadKubeConfig(draft);
+      const namespaces = await listNamespaces(kc);
+      const namespaceOk = !draft.k8sNamespace || namespaces.includes(draft.k8sNamespace);
+      res.json({
+        ok: namespaceOk,
+        message: namespaceOk
+          ? `Kubeconfig valid — reached the API server, found ${namespaces.length} namespace(s).`
+          : `Reached the API server, but namespace "${draft.k8sNamespace}" wasn't found (have: ${namespaces.slice(0, 5).join(", ")}${namespaces.length > 5 ? "..." : ""}).`,
+        latencyMs: Date.now() - started,
+      });
+      return;
+    }
+    // rdp / vnc — guacd itself does the real protocol handshake at connect
+    // time; a plain TCP reachability check on the target is the honest
+    // thing to offer here without re-implementing guacd's negotiation.
+    const result = await tcpProbe(draft.host, draft.port);
+    res.json({ ...result, message: result.message + (result.ok ? " (TCP reachability only — full protocol not tested here.)" : ""), latencyMs: Date.now() - started });
+  } catch (err) {
+    res.json({ ok: false, message: (err as Error).message, latencyMs: Date.now() - started });
+  }
 });
 
 app.patch("/api/admin/connections/:id", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
@@ -1632,6 +1732,71 @@ app.delete("/api/admin/join-tokens/:token", requireAuth, requireAdmin, (req: Aut
   res.status(204).end();
 });
 
+// ---------- REST API: agent binary download — serves the real compiled
+// binaries produced by agent/scripts/build-binary.sh (Linux) and
+// build-windows.sh (Windows), when present on disk. These build outputs
+// are gitignored (100MB+ native binaries), so on a fresh checkout that
+// hasn't run the build scripts yet, download-info honestly reports
+// unavailable rather than the UI showing a button that 404s. Available to
+// any admin (not full-admin-only like join tokens) since installing an
+// agent is an operational task, not a structural/bootstrap-credential one. ----------
+
+const AGENT_DIR = path.resolve(process.cwd(), "..", "agent");
+const AGENT_ARCHIVE_CACHE = path.join(AGENT_DIR, ".download-cache");
+const AGENT_PLATFORMS: Record<string, { distDir: string; archiveName: string }> = {
+  linux: { distDir: "dist-linux-x64", archiveName: "remotely-agent-linux-x64.tar.gz" },
+  windows: { distDir: "dist-windows-x64", archiveName: "remotely-agent-windows-x64.tar.gz" },
+};
+
+function agentDistAvailable(platform: string): boolean {
+  const cfg = AGENT_PLATFORMS[platform];
+  return !!cfg && fs.existsSync(path.join(AGENT_DIR, cfg.distDir));
+}
+
+// Built lazily on first download request per platform, then cached on disk
+// keyed by the dist dir's mtime — cheap correctness check that avoids
+// re-tarring a 100MB+ directory on every request while still picking up a
+// rebuilt binary automatically.
+function ensureAgentArchive(platform: string): string {
+  const cfg = AGENT_PLATFORMS[platform];
+  const distPath = path.join(AGENT_DIR, cfg.distDir);
+  const distMtime = fs.statSync(distPath).mtimeMs;
+  const archivePath = path.join(AGENT_ARCHIVE_CACHE, `${platform}-${distMtime}.tar.gz`);
+  if (!fs.existsSync(archivePath)) {
+    fs.mkdirSync(AGENT_ARCHIVE_CACHE, { recursive: true });
+    for (const f of fs.readdirSync(AGENT_ARCHIVE_CACHE)) {
+      if (f.startsWith(`${platform}-`)) fs.rmSync(path.join(AGENT_ARCHIVE_CACHE, f), { force: true });
+    }
+    const extras = platform === "linux" && fs.existsSync(path.join(AGENT_DIR, "scripts", "install-linux.sh")) ? ["scripts/install-linux.sh"] : [];
+    execFileSync("tar", ["czf", archivePath, "-C", AGENT_DIR, cfg.distDir, ...extras]);
+  }
+  return archivePath;
+}
+
+app.get("/api/admin/agent/download-info", requireAuth, requireAnyAdmin, (_req, res) => {
+  res.json({
+    linux: agentDistAvailable("linux"),
+    windows: agentDistAvailable("windows"),
+  });
+});
+
+app.get("/api/admin/agent/download/:platform", requireAuth, requireAnyAdmin, (req: AuthedRequest, res) => {
+  const platform = req.params.platform;
+  if (!agentDistAvailable(platform)) {
+    res.status(404).json({
+      error: `No compiled ${platform} agent binary found on this control plane. Run agent/scripts/build-binary.sh (Linux) or agent/scripts/build-windows.sh (Windows) to produce one.`,
+    });
+    return;
+  }
+  try {
+    const archivePath = ensureAgentArchive(platform);
+    logAudit(req.user!.sub, "agent_binary_downloaded", null, `platform=${platform}`);
+    res.download(archivePath, AGENT_PLATFORMS[platform].archiveName);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to package agent archive: ${(err as Error).message}` });
+  }
+});
+
 // ---------- REST API: Bots (machine identity — full admin only, same
 // reasoning as agent join tokens: issuing bootstrap credentials is a
 // structural action). See docs/plans/2026-07-29-machine-id-bots.md. ----------
@@ -2083,6 +2248,16 @@ function isValidCidr(entry: string): boolean {
   return true;
 }
 
+// Read-only — no matching POST, deliberately. See getOidcConfigSummary's
+// own comment for why: OIDC config is env-var-only, read once at process
+// start, and making it live-editable is a bigger restructure than this
+// pass. This tells an admin exactly what's active and which env vars +
+// restart change it, instead of leaving them to guess or implying a save
+// button that wouldn't actually take effect.
+app.get("/api/admin/sso-config", requireAuth, requireAdmin, (_req, res) => {
+  res.json(getOidcConfigSummary());
+});
+
 app.get("/api/admin/security-policy", requireAuth, requireAdmin, (_req, res) => {
   res.json(getSecurityPolicy());
 });
@@ -2095,12 +2270,22 @@ app.post("/api/admin/security-policy", requireAuth, requireAdmin, (req: AuthedRe
     res.status(400).json({ error: `not a valid CIDR or IP: ${bad}` });
     return;
   }
-  const saved = setSecurityPolicy({ requireMfaForAdmins: Boolean(body.requireMfaForAdmins), adminIpAllowlist }, req.user!.sub);
+  const loginMaxAttempts = Number(body.loginMaxAttempts);
+  const loginWindowMinutes = Number(body.loginWindowMinutes);
+  const loginLockoutMinutes = Number(body.loginLockoutMinutes);
+  if (!(loginMaxAttempts >= 1) || !(loginWindowMinutes >= 1) || !(loginLockoutMinutes >= 1)) {
+    res.status(400).json({ error: "loginMaxAttempts, loginWindowMinutes, and loginLockoutMinutes must all be at least 1" });
+    return;
+  }
+  const saved = setSecurityPolicy(
+    { requireMfaForAdmins: Boolean(body.requireMfaForAdmins), adminIpAllowlist, loginMaxAttempts, loginWindowMinutes, loginLockoutMinutes },
+    req.user!.sub
+  );
   logAudit(
     req.user!.sub,
     "security_policy_updated",
     null,
-    `requireMfaForAdmins=${saved.requireMfaForAdmins} adminIpAllowlist=${saved.adminIpAllowlist.join(",") || "(none)"}`
+    `requireMfaForAdmins=${saved.requireMfaForAdmins} adminIpAllowlist=${saved.adminIpAllowlist.join(",") || "(none)"} loginMaxAttempts=${saved.loginMaxAttempts} loginWindowMinutes=${saved.loginWindowMinutes} loginLockoutMinutes=${saved.loginLockoutMinutes}`
   );
   res.json(saved);
 });
@@ -3037,7 +3222,7 @@ vncWss.on("connection", async (browserSocket, req) => {
 
 const sshDirectWss = new WebSocketServer({ noServer: true });
 
-sshDirectWss.on("connection", (browserSocket, req) => {
+sshDirectWss.on("connection", async (browserSocket, req) => {
   const url = new URL(req.url ?? "", "http://internal");
   const token = url.searchParams.get("token");
   const resourceId = url.searchParams.get("resourceId");
@@ -3066,8 +3251,37 @@ sshDirectWss.on("connection", (browserSocket, req) => {
     return;
   }
   const target = auth.conn;
-
   const sessionId = crypto.randomUUID();
+
+  // ─── Moderated Sessions gate — same pattern already proven on the
+  // ssh-agent (sessionWss) handler above, extended here. A session this
+  // role requires moderation for cannot dial the target until a moderator
+  // approves it from the Moderated Sessions queue. ───────────────────────
+  const moderationPolicy = getModerationPolicy(roles);
+  if (moderationPolicy) {
+    if (browserSocket.readyState === WebSocket.OPEN) {
+      browserSocket.send(JSON.stringify({ type: "moderation_pending", message: "Waiting for a moderator to approve this session..." }));
+    }
+    logAudit(payload.sub, "session_moderation_pending", target.id, `sessionId=${sessionId}`);
+    let cancelled = false;
+    browserSocket.once("close", () => {
+      cancelled = true;
+      cancelPendingSession(sessionId);
+    });
+    try {
+      await awaitModeration(sessionId, target.id, target.hostname, payload.sub, moderationPolicy);
+    } catch (err) {
+      logAudit(payload.sub, "session_moderation_timeout", target.id, `sessionId=${sessionId} reason=${(err as Error).message}`);
+      if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(4009, (err as Error).message);
+      return;
+    }
+    if (cancelled || browserSocket.readyState !== WebSocket.OPEN) return;
+    logAudit(payload.sub, "session_moderation_approved", target.id, `sessionId=${sessionId}`);
+    if (browserSocket.readyState === WebSocket.OPEN) {
+      browserSocket.send(JSON.stringify({ type: "moderation_approved", message: "Moderator approved. Session starting." }));
+    }
+  }
+
   const recordingStream = startRecording(sessionId);
   const startedAt = Date.now();
   const record = (dir: "i" | "o", data: Buffer) => {
@@ -3654,9 +3868,38 @@ function warnAboutUnsetSecrets() {
 }
 
 // ─── Moderated Sessions API ──────────────────────────────────────────────────
-import { listPendingModeratedSessions } from "./moderatedSessions.js";
-app.get("/api/admin/moderated-sessions", requireAuth, requireAdmin, (_req, res) => {
+// Gated to full admin OR any role with canModerate:true — moderating is a
+// distinct RBAC permission from being an admin (a plain user can hold a
+// "moderator" role without any admin access at all), so this deliberately
+// isn't requireAdmin/requireAnyAdmin.
+import { listPendingModeratedSessions, moderatorJoined, getModerationPolicy, awaitModeration, cancelPendingSession } from "./moderatedSessions.js";
+function isModerator(req: AuthedRequest): boolean {
+  const roles = resolveRoles(req.user!.roles);
+  return isFullAdmin(roles) || roles.some((r) => r.canModerate);
+}
+app.get("/api/admin/moderated-sessions", requireAuth, (req: AuthedRequest, res) => {
+  if (!isModerator(req)) {
+    res.status(403).json({ error: "moderator role required" });
+    return;
+  }
   res.json(listPendingModeratedSessions());
+});
+
+// The actual "release" side — without this, a gated session can only ever
+// time out, never be approved. Caught live: nothing called moderatorJoined
+// anywhere in this file before this endpoint existed.
+app.post("/api/admin/moderated-sessions/:sessionId/approve", requireAuth, (req: AuthedRequest, res) => {
+  if (!isModerator(req)) {
+    res.status(403).json({ error: "moderator role required" });
+    return;
+  }
+  const released = moderatorJoined(req.params.sessionId, req.user!.sub);
+  if (!released) {
+    res.status(404).json({ error: "session not found, already released, or more moderators still required" });
+    return;
+  }
+  logAudit(req.user!.sub, "session_moderated", null, `sessionId=${req.params.sessionId}`);
+  res.status(204).end();
 });
 
 // ─── Slack Integration API ───────────────────────────────────────────────────

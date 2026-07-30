@@ -121,7 +121,7 @@ const FEATURES: Feature[] = [
     name: "Moderated Sessions",
     status: "live",
     category: "Access & Sessions",
-    description: "Roles can require a live moderator to join before a session starts. Moderator can force-terminate.",
+    description: "Roles can require a live moderator to join before a session starts (currently enforced on ssh-direct sessions; other session types are a fast-follow). A moderator queue page shows who's waiting and approves with one click. Moderator can force-terminate.",
     impact: "Four-eyes principle for sensitive systems — no one accesses production alone. Critical for compliance.",
   },
 
@@ -181,7 +181,7 @@ const FEATURES: Feature[] = [
     name: "SSO (OIDC)",
     status: "live",
     category: "Authentication & Security",
-    description: "Real authorization-code + PKCE flow with JIT user provisioning on first login.",
+    description: "Real authorization-code + PKCE flow with JIT user provisioning on first login. Admin page shows the live-active issuer/client ID and exact env vars to change them (config itself is still env-var + restart, not hot-reloadable from the UI).",
     impact: "Single sign-on from your corporate IdP (Okta, Google, Azure AD). No separate passwords to manage.",
   },
   {
@@ -209,8 +209,8 @@ const FEATURES: Feature[] = [
     name: "Rate Limiting + Account Lockout",
     status: "live",
     category: "Authentication & Security",
-    description: "Sliding-window rate limiter with lockout after repeated failures. Admin alert on lockout.",
-    impact: "Stops brute-force attacks automatically. Alerts you when someone is trying to break in.",
+    description: "Sliding-window rate limiter with lockout after repeated failures, admin alert on lockout. Max attempts/window/lockout duration are configurable from Security Policy, read live rather than fixed at server start.",
+    impact: "Stops brute-force attacks automatically, tunable to your own risk tolerance. Alerts you when someone is trying to break in.",
   },
   {
     name: "Token Revocation",
@@ -315,6 +315,20 @@ const FEATURES: Feature[] = [
     impact: "Know when services go down before users complain. Basic uptime monitoring built right into your access tool.",
   },
   {
+    name: "Control Plane Status Page",
+    status: "live",
+    category: "Operations & Compliance",
+    description: "Public, unauthenticated health/status page — version, uptime, connected agent count, active session count.",
+    impact: "Point a status checker or a curious client at one URL instead of asking someone to check server logs.",
+  },
+  {
+    name: "Connection Test Before Save",
+    status: "live",
+    category: "Operations & Compliance",
+    description: "SSH/database/Kubernetes connections dial real credentials before saving; RDP/VNC get a TCP reachability check.",
+    impact: "Catch a typo'd hostname or wrong password at creation time, not the first time someone tries to actually connect.",
+  },
+  {
     name: "SIEM Export",
     status: "live",
     category: "Operations & Compliance",
@@ -397,8 +411,8 @@ const FEATURES: Feature[] = [
     name: "Packaged Agent Binary (Auto-Update)",
     status: "in-progress",
     category: "Upcoming",
-    description: "Single compiled binary for Linux/Windows with systemd/Windows Service installer and OTA update.",
-    impact: "Deploy the agent like any real software — one command, runs as a service, updates itself.",
+    description: "Single compiled binary for Linux/Windows, downloadable from Install Agent with a systemd/Windows Service installer bundled in, plus real join-token issuance from the same page. Self-triggered OTA update (vs. a manually re-run install) still needs AGENT_UPDATE_URL configured and isn't wired end-to-end yet.",
+    impact: "Deploy the agent like any real software — download, one command, runs as a service. Auto-update without a manual re-install is the remaining piece.",
   },
   {
     name: "Terraform Provider",

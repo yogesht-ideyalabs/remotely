@@ -52,15 +52,28 @@ export interface PendingModeratedSession {
 // In-memory store of sessions waiting for a moderator
 const pendingSessions = new Map<string, PendingModeratedSession>();
 
+// A sensible fixed policy for the simple per-role boolean toggle
+// (Role.requireSessionModeration) that actually exists and is settable
+// from the Roles page — one moderator required, 5-minute wait before the
+// request times out, and the session pauses (rather than terminating
+// outright) if every moderator disconnects mid-session. A previous version
+// of this function looked for a `role.moderationPolicy` object field that
+// was never added to the real `Role` type anywhere — it always returned
+// null, so no session was ever actually gated regardless of what any UI
+// showed. Fixed to read the field that's genuinely on the type.
+const DEFAULT_MODERATION_POLICY: ModerationPolicy = {
+  required: true,
+  minModerators: 1,
+  onModeratorLeave: "pause",
+  timeoutSeconds: 300,
+};
+
 /**
  * Check if a user's roles require session moderation.
  */
 export function getModerationPolicy(roles: Role[]): ModerationPolicy | null {
   for (const role of roles) {
-    const policy = (role as Role & { moderationPolicy?: ModerationPolicy }).moderationPolicy;
-    if (policy?.required) {
-      return policy;
-    }
+    if (role.requireSessionModeration) return DEFAULT_MODERATION_POLICY;
   }
   return null;
 }

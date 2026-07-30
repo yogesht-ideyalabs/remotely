@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchPlugins, createPlugin, updatePlugin, deletePlugin, testPlugin, type WebhookPluginView } from "../api";
 import { AUDIT_CATEGORIES } from "../auditCategories";
 import { FieldLabel } from "../components/FieldLabel";
+import { Skeleton } from "../components/Skeleton";
 
 const emptyForm = { name: "", enabled: false, eventTypes: [] as string[], webhookUrl: "", secret: "" };
 
@@ -90,6 +91,11 @@ export default function Plugins() {
         plugin only fires for the event types you pick, like a Slack or PagerDuty integration that only pings you
         for what you actually care about. Deliveries are HMAC-signed the same way SIEM Export's are.
       </p>
+      <p className="page-sub" style={{ fontSize: 12, opacity: 0.8 }}>
+        Want approve/deny buttons on the Slack message, or a real PagerDuty incident, instead of a plain webhook
+        POST? That's <a href="/admin/chatops">ChatOps</a>, which has native, interactive integrations for
+        Slack/PagerDuty/Teams/Discord. Use Plugins here for a generic signed webhook to any receiver.
+      </p>
       {error && <div className="error-banner">{error}</div>}
 
       {editing !== null && (
@@ -168,6 +174,7 @@ export default function Plugins() {
         </button>
       )}
 
+      {!plugins && <Skeleton lines={3} />}
       {plugins && plugins.length === 0 && <div className="empty-state">No plugins configured yet.</div>}
       {plugins && plugins.length > 0 && (
         <table className="audit-table">

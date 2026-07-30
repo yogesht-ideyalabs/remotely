@@ -12,6 +12,9 @@ export default function SecurityPolicy() {
   const [policy, setPolicy] = useState<SecurityPolicyView | null>(null);
   const [requireMfaForAdmins, setRequireMfaForAdmins] = useState(false);
   const [allowlistText, setAllowlistText] = useState("");
+  const [loginMaxAttempts, setLoginMaxAttempts] = useState(5);
+  const [loginWindowMinutes, setLoginWindowMinutes] = useState(15);
+  const [loginLockoutMinutes, setLoginLockoutMinutes] = useState(15);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -23,6 +26,9 @@ export default function SecurityPolicy() {
         setPolicy(p);
         setRequireMfaForAdmins(p.requireMfaForAdmins);
         setAllowlistText(p.adminIpAllowlist.join("\n"));
+        setLoginMaxAttempts(p.loginMaxAttempts);
+        setLoginWindowMinutes(p.loginWindowMinutes);
+        setLoginLockoutMinutes(p.loginLockoutMinutes);
       })
       .catch((e) => setError(e.message));
   }
@@ -37,9 +43,18 @@ export default function SecurityPolicy() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
-      const saved = await saveSecurityPolicy({ requireMfaForAdmins, adminIpAllowlist });
+      const saved = await saveSecurityPolicy({
+        requireMfaForAdmins,
+        adminIpAllowlist,
+        loginMaxAttempts,
+        loginWindowMinutes,
+        loginLockoutMinutes,
+      });
       setPolicy(saved);
       setAllowlistText(saved.adminIpAllowlist.join("\n"));
+      setLoginMaxAttempts(saved.loginMaxAttempts);
+      setLoginWindowMinutes(saved.loginWindowMinutes);
+      setLoginLockoutMinutes(saved.loginLockoutMinutes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "save failed");
     } finally {
@@ -94,6 +109,42 @@ export default function SecurityPolicy() {
             onChange={(e) => setAllowlistText(e.target.value)}
             style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}
           />
+        </div>
+
+        <div className="form-row" style={{ flexDirection: "column", alignItems: "stretch", marginTop: 14 }}>
+          <FieldLabel label="Login rate limiting &amp; lockout">
+            After this many failed login attempts for a single account within the window, that account is locked
+            out for the lockout period. Applies to every login attempt, not just admins.
+          </FieldLabel>
+          <div style={{ display: "flex", gap: 12 }}>
+            <label style={{ flex: 1 }}>
+              <span className="hint" style={{ display: "block", marginBottom: 4 }}>Max attempts</span>
+              <input
+                type="number"
+                min={1}
+                value={loginMaxAttempts}
+                onChange={(e) => setLoginMaxAttempts(Number(e.target.value))}
+              />
+            </label>
+            <label style={{ flex: 1 }}>
+              <span className="hint" style={{ display: "block", marginBottom: 4 }}>Window (minutes)</span>
+              <input
+                type="number"
+                min={1}
+                value={loginWindowMinutes}
+                onChange={(e) => setLoginWindowMinutes(Number(e.target.value))}
+              />
+            </label>
+            <label style={{ flex: 1 }}>
+              <span className="hint" style={{ display: "block", marginBottom: 4 }}>Lockout (minutes)</span>
+              <input
+                type="number"
+                min={1}
+                value={loginLockoutMinutes}
+                onChange={(e) => setLoginLockoutMinutes(Number(e.target.value))}
+              />
+            </label>
+          </div>
         </div>
 
         <button className="primary" style={{ width: "auto", marginTop: 14 }} disabled={saving}>

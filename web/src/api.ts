@@ -211,6 +211,8 @@ export interface Role {
   manageLabels: Record<string, string[]>;
   allowClipboard: boolean;
   breakGlassEligible: boolean;
+  requireSessionModeration?: boolean;
+  canModerate?: boolean;
 }
 
 export function fetchRoles(): Promise<Role[]> {
@@ -253,7 +255,7 @@ export interface Connection {
   k8sNamespace?: string;
   k8sPodName?: string;
   k8sContainerName?: string;
-  dbEngine?: "postgres" | "mysql";
+  dbEngine?: "postgres" | "mysql" | "mongodb" | "redis";
 }
 
 export function fetchConnections(): Promise<Connection[]> {
@@ -415,12 +417,68 @@ export function fetchJoinTokens(): Promise<JoinTokenItem[]> {
   return apiFetch("/api/admin/join-tokens");
 }
 
+// ---------- moderated sessions ----------
+
+export interface PendingModeratedSession {
+  sessionId: string;
+  resourceId: string;
+  resourceHostname: string;
+  username: string;
+  requestedAt: number;
+  currentModerators: string[];
+  requiredModerators: number;
+  timeoutSeconds: number;
+}
+
+export function fetchModeratedSessions(): Promise<PendingModeratedSession[]> {
+  return apiFetch("/api/admin/moderated-sessions");
+}
+
+export function approveModeratedSessionApi(sessionId: string): Promise<null> {
+  return apiFetch(`/api/admin/moderated-sessions/${encodeURIComponent(sessionId)}/approve`, { method: "POST" });
+}
+
 export function createJoinTokenApi(label: string, maxUses: number, ttlMinutes: number): Promise<JoinTokenItem> {
   return apiFetch("/api/admin/join-tokens", { method: "POST", body: JSON.stringify({ label, maxUses, ttlMinutes }) });
 }
 
 export function revokeJoinTokenApi(token: string): Promise<null> {
   return apiFetch(`/api/admin/join-tokens/${encodeURIComponent(token)}`, { method: "DELETE" });
+}
+
+// ---------- admin: agent binary download ----------
+
+export interface AgentDownloadInfo {
+  linux: boolean;
+  windows: boolean;
+}
+
+export function fetchAgentDownloadInfo(): Promise<AgentDownloadInfo> {
+  return apiFetch("/api/admin/agent/download-info");
+}
+
+// Not apiFetch: the response is a binary archive, not JSON, and we need to
+// hand the browser a real file save rather than a navigable URL (a plain
+// <a href> can't carry the Authorization header this endpoint requires).
+export async function downloadAgentArchive(platform: "linux" | "windows"): Promise<void> {
+  const session = getSession();
+  const res = await fetch(`/api/admin/agent/download/${platform}`, {
+    headers: session ? { Authorization: `Bearer ${session.token}` } : {},
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? "download failed");
+  }
+  const blob = await res.blob();
+  const filename = platform === "linux" ? "remotely-agent-linux-x64.tar.gz" : "remotely-agent-windows-x64.tar.gz";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ---------- admin: bots (machine identity) ----------
@@ -771,6 +829,9 @@ export function testSiemConfig(): Promise<SiemDeliveryResult> {
 export interface SecurityPolicyView {
   requireMfaForAdmins: boolean;
   adminIpAllowlist: string[];
+  loginMaxAttempts: number;
+  loginWindowMinutes: number;
+  loginLockoutMinutes: number;
   updatedAt: number;
   updatedBy: string;
 }
@@ -786,7 +847,9 @@ export function fetchSecurityPolicy(): Promise<SecurityPolicyView> {
   return apiFetch("/api/admin/security-policy");
 }
 
-export function saveSecurityPolicy(changes: { requireMfaForAdmins: boolean; adminIpAllowlist: string[] }): Promise<SecurityPolicyView> {
+export function saveSecurityPolicy(
+  changes: { requireMfaForAdmins: boolean; adminIpAllowlist: string[]; loginMaxAttempts: number; loginWindowMinutes: number; loginLockoutMinutes: number }
+): Promise<SecurityPolicyView> {
   return apiFetch("/api/admin/security-policy", { method: "POST", body: JSON.stringify(changes) });
 }
 

@@ -12,6 +12,7 @@ interface NavItem {
 const PRIMARY_ITEMS: NavItem[] = [
   { to: "/resources", label: "Resources", icon: "resources" },
   { to: "/access-requests", label: "Access", icon: "key" },
+  { to: "/notifications", label: "Notifications", icon: "bell" },
   { to: "/features", label: "Features", icon: "star" },
 ];
 
@@ -28,6 +29,7 @@ function buildAdminItems(session: NonNullable<ReturnType<typeof getSession>>): N
   items.push({ to: "/audit", label: "Audit Log", icon: "list" });
   if (session.isAdmin) items.push({ to: "/recordings", label: "Recordings", icon: "play-circle" });
   items.push({ to: "/admin/connections", label: "Connections", icon: "plug" });
+  items.push({ to: "/admin/install-agent", label: "Install Agent", icon: "download" });
   items.push({ to: "/admin/agents", label: "Agent Health", icon: "bars" });
   items.push({ to: "/admin/users", label: "Users", icon: "users" });
   if (session.isAdmin) {
@@ -39,7 +41,9 @@ function buildAdminItems(session: NonNullable<ReturnType<typeof getSession>>): N
     items.push({ to: "/admin/plugins", label: "Plugins", icon: "puzzle" });
     items.push({ to: "/admin/chatops", label: "ChatOps", icon: "chat" });
     items.push({ to: "/admin/security-policy", label: "Security Policy", icon: "lock" });
+    items.push({ to: "/admin/sso-config", label: "SSO (OIDC)", icon: "key" });
     items.push({ to: "/admin/bots", label: "Bots", icon: "bot" });
+    items.push({ to: "/admin/moderated-sessions", label: "Moderated Sessions", icon: "activity" });
   }
   return items;
 }

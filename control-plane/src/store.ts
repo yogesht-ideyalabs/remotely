@@ -151,7 +151,7 @@ export interface Connection {
   // than being backfilled here, so every database connection saved before
   // this field existed keeps working unchanged instead of needing a
   // migration.
-  dbEngine?: "postgres" | "mysql";
+  dbEngine?: "postgres" | "mysql" | "mongodb" | "redis";
 }
 
 export interface SshKey {
@@ -788,6 +788,13 @@ export interface SecurityPolicy {
   // CIDR blocks (e.g. "10.0.0.0/8", "203.0.113.4/32"); empty = no
   // restriction, matching today's (unrestricted) behavior.
   adminIpAllowlist: string[];
+  // Login rate limiting / account lockout — previously hardcoded constants
+  // in index.ts's loginLimiter, now read live from here on every check
+  // instead of being baked into a closure at server start (same "live, not
+  // startup-snapshotted" principle already used for RBAC roles elsewhere).
+  loginMaxAttempts: number;
+  loginWindowMinutes: number;
+  loginLockoutMinutes: number;
   updatedAt: number;
   updatedBy: string;
 }
@@ -795,17 +802,27 @@ export interface SecurityPolicy {
 const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
   requireMfaForAdmins: false,
   adminIpAllowlist: [],
+  loginMaxAttempts: 5,
+  loginWindowMinutes: 15,
+  loginLockoutMinutes: 15,
   updatedAt: 0,
   updatedBy: "",
 };
 
-let securityPolicy: SecurityPolicy = loadTable<SecurityPolicy>("securityPolicy")[0] ?? DEFAULT_SECURITY_POLICY;
+// Merged, not replaced: a record persisted before loginMaxAttempts/
+// loginWindowMinutes/loginLockoutMinutes existed would otherwise silently
+// drop those fields to undefined for every reader (including the login
+// rate limiter itself) until the next full save.
+let securityPolicy: SecurityPolicy = { ...DEFAULT_SECURITY_POLICY, ...(loadTable<SecurityPolicy>("securityPolicy")[0] ?? {}) };
 
 export function getSecurityPolicy(): SecurityPolicy {
   return securityPolicy;
 }
 
-export function setSecurityPolicy(patch: { requireMfaForAdmins: boolean; adminIpAllowlist: string[] }, updatedBy: string): SecurityPolicy {
+export function setSecurityPolicy(
+  patch: { requireMfaForAdmins: boolean; adminIpAllowlist: string[]; loginMaxAttempts: number; loginWindowMinutes: number; loginLockoutMinutes: number },
+  updatedBy: string
+): SecurityPolicy {
   securityPolicy = { ...patch, updatedAt: Date.now(), updatedBy };
   saveRow("securityPolicy", "global", securityPolicy);
   return securityPolicy;

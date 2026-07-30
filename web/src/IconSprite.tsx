@@ -23,6 +23,7 @@ export default function IconSprite() {
         <symbol id="i-building" viewBox="0 0 24 24"><rect x="5" y="2.5" width="14" height="19" /><line x1="8.5" y1="6.5" x2="10.5" y2="6.5" /><line x1="13.5" y1="6.5" x2="15.5" y2="6.5" /><line x1="8.5" y1="10.5" x2="10.5" y2="10.5" /><line x1="13.5" y1="10.5" x2="15.5" y2="10.5" /><line x1="8.5" y1="14.5" x2="10.5" y2="14.5" /><line x1="13.5" y1="14.5" x2="15.5" y2="14.5" /><line x1="10" y1="21.5" x2="10" y2="17.5" /><line x1="14" y1="21.5" x2="14" y2="17.5" /></symbol>
         <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" /><line x1="12" y1="12" x2="18.5" y2="6.5" /></symbol>
         <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5v-11" /><path d="M7 8.7l5-4.7 5 4.7" /><path d="M4 20h16" /></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11" /><path d="M7 10.3l5 4.7 5-4.7" /><path d="M4 20h16" /></symbol>
         <symbol id="i-check-shield" viewBox="0 0 24 24"><path d="M12 2.5l7.5 3v6c0 5-3.2 8.3-7.5 10-4.3-1.7-7.5-5-7.5-10v-6z" /><path d="M8.5 12l2.5 2.5 4.5-5" /></symbol>
         <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M9 4h4v1.8a1.8 1.8 0 1 0 0 3.4V11h5v4.8a1.8 1.8 0 1 1-3.4 0H13v4H9v-4H4.8a1.8 1.8 0 1 1 0-3.4V9H9z" /></symbol>
         <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><line x1="20" y1="20" x2="15.7" y2="15.7" /></symbol>

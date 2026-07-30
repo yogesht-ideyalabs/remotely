@@ -8,6 +8,7 @@ import {
   fetchUsers,
   fetchOrganizations,
   fetchAllSshKeys,
+  apiFetch,
   type Connection,
   type ConnectionType,
   type AdminUser,
@@ -32,7 +33,7 @@ const emptyForm = {
   username: "",
   password: "",
   databaseName: "",
-  dbEngine: "postgres" as "postgres" | "mysql",
+  dbEngine: "postgres" as "postgres" | "mysql" | "mongodb" | "redis",
   sshKeyId: "",
   sshJitEnabled: false,
   kubeconfigText: "",
@@ -47,6 +48,8 @@ export default function Connections() {
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [sshKeys, setSshKeys] = useState<SshKeyMeta[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latencyMs?: number } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [assigningFolder, setAssigningFolder] = useState<string | null>(null);
@@ -88,9 +91,11 @@ export default function Connections() {
   function startCreate() {
     setForm(emptyForm);
     setEditing("");
+    setTestResult(null);
   }
 
   function startEdit(c: Connection) {
+    setTestResult(null);
     setForm({
       id: c.id,
       hostname: c.hostname,
@@ -114,45 +119,58 @@ export default function Connections() {
     setEditing(c.id);
   }
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
+  // Shared by save() and testConnection() — the test button needs to send
+  // the exact same shape a real save would, so a test that passes actually
+  // means something about what would get saved, not a simplified stand-in.
+  function buildPayload(): { payload: Partial<Connection> } | { error: string } {
     let extraLabels;
     try {
       extraLabels = JSON.parse(form.extraLabelsJson || "{}");
     } catch {
-      setError('extra labels must be valid JSON, e.g. {"region":"us-east-1"}');
-      return;
+      return { error: 'extra labels must be valid JSON, e.g. {"region":"us-east-1"}' };
     }
     const labels = { ...extraLabels, ...(form.organization ? { client: form.organization } : {}) };
-    const payload = {
-      hostname: form.hostname,
-      type: form.type,
-      labels,
-      folder: form.folder,
-      host: form.host,
-      port: Number(form.port) || 0,
-      // Kubernetes has no per-connection "login" the way ssh/rdp/database
-      // do (there's no login negotiation in a pod exec) — reuse the same
-      // logins-allowlist RBAC mechanism everywhere else with one fixed
-      // conventional value, so "can this role use kubernetes connections
-      // at all" is still gated the normal way instead of inventing a
-      // separate concept just for this type.
-      username: form.type === "kubernetes" ? "exec" : form.username,
-      ...(form.password ? { password: form.password } : {}),
-      databaseName: form.databaseName,
-      dbEngine: form.type === "database" ? form.dbEngine : undefined,
-      sshKeyId: form.type === "ssh-direct" ? form.sshKeyId || undefined : undefined,
-      sshJitEnabled: form.type === "ssh-direct" ? form.sshJitEnabled : false,
-      ...(form.type === "kubernetes"
-        ? {
-            kubeconfig: form.kubeconfigText ? btoa(unescape(encodeURIComponent(form.kubeconfigText))) : undefined,
-            k8sNamespace: form.k8sNamespace,
-            k8sPodName: form.k8sPodName,
-            k8sContainerName: form.k8sContainerName || undefined,
-          }
-        : {}),
+    return {
+      payload: {
+        hostname: form.hostname,
+        type: form.type,
+        labels,
+        folder: form.folder,
+        host: form.host,
+        port: Number(form.port) || 0,
+        // Kubernetes has no per-connection "login" the way ssh/rdp/database
+        // do (there's no login negotiation in a pod exec) — reuse the same
+        // logins-allowlist RBAC mechanism everywhere else with one fixed
+        // conventional value, so "can this role use kubernetes connections
+        // at all" is still gated the normal way instead of inventing a
+        // separate concept just for this type.
+        username: form.type === "kubernetes" ? "exec" : form.username,
+        ...(form.password ? { password: form.password } : {}),
+        databaseName: form.databaseName,
+        dbEngine: form.type === "database" ? form.dbEngine : undefined,
+        sshKeyId: form.type === "ssh-direct" ? form.sshKeyId || undefined : undefined,
+        sshJitEnabled: form.type === "ssh-direct" ? form.sshJitEnabled : false,
+        ...(form.type === "kubernetes"
+          ? {
+              kubeconfig: form.kubeconfigText ? btoa(unescape(encodeURIComponent(form.kubeconfigText))) : undefined,
+              k8sNamespace: form.k8sNamespace,
+              k8sPodName: form.k8sPodName,
+              k8sContainerName: form.k8sContainerName || undefined,
+            }
+          : {}),
+      },
     };
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const built = buildPayload();
+    if ("error" in built) {
+      setError(built.error);
+      return;
+    }
+    const payload = built.payload;
     try {
       if (editing === "") {
         await createConnectionApi(payload);
@@ -163,6 +181,25 @@ export default function Connections() {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "save failed");
+    }
+  }
+
+  async function testConnection() {
+    const built = buildPayload();
+    if ("error" in built) {
+      setError(built.error);
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    setError(null);
+    try {
+      const result = await apiFetch("/api/admin/connections/test", { method: "POST", body: JSON.stringify(built.payload) });
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : "test failed" });
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -371,17 +408,28 @@ export default function Connections() {
                 <>
                   <div>
                     <FieldLabel label="Engine">Which database server this is — the query console speaks the right wire protocol for whichever you pick.</FieldLabel>
-                    <select value={form.dbEngine} onChange={(e) => setForm({ ...form, dbEngine: e.target.value as "postgres" | "mysql" })}>
+                    <select
+                      value={form.dbEngine}
+                      onChange={(e) => setForm({ ...form, dbEngine: e.target.value as "postgres" | "mysql" | "mongodb" | "redis" })}
+                    >
                       <option value="postgres">PostgreSQL</option>
                       <option value="mysql">MySQL</option>
+                      <option value="mongodb">MongoDB</option>
+                      <option value="redis">Redis</option>
                     </select>
                   </div>
                   <div>
-                    <FieldLabel label="Database name">
-                      The specific database to connect to on that host — not the server, the individual database
-                      within it (what you'd pass to <code>{form.dbEngine === "mysql" ? "mysql -D" : "psql -d"}</code>).
+                    <FieldLabel label={form.dbEngine === "redis" ? "Database index" : "Database name"}>
+                      {form.dbEngine === "redis"
+                        ? "Redis's numeric database index — 0 is the default if you've never changed it."
+                        : "The specific database to connect to on that host — not the server, the individual database " +
+                          `within it (what you'd pass to ${form.dbEngine === "mysql" ? "mysql -D" : form.dbEngine === "mongodb" ? "mongosh" : "psql -d"}).`}
                     </FieldLabel>
-                    <input placeholder="database name" value={form.databaseName} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
+                    <input
+                      placeholder={form.dbEngine === "redis" ? "0" : "database name"}
+                      value={form.databaseName}
+                      onChange={(e) => setForm({ ...form, databaseName: e.target.value })}
+                    />
                   </div>
                 </>
               )}
@@ -490,9 +538,19 @@ export default function Connections() {
               <input value={form.extraLabelsJson} onChange={(e) => setForm({ ...form, extraLabelsJson: e.target.value })} />
             </div>
           </div>
+          {testResult && (
+            <div className={testResult.ok ? "hint" : "error-banner"} style={{ marginBottom: 12 }}>
+              {testResult.ok ? "✓ " : "✗ "}
+              {testResult.message}
+              {testResult.latencyMs !== undefined && ` (${testResult.latencyMs}ms)`}
+            </div>
+          )}
           <div className="form-row">
             <button className="primary" style={{ width: "auto", padding: "8px 20px" }}>
               Save
+            </button>
+            <button type="button" className="secondary" onClick={testConnection} disabled={testing}>
+              {testing ? "Testing..." : "Test Connection"}
             </button>
             <button type="button" className="secondary" onClick={() => setEditing(null)}>
               Cancel

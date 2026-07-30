@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchActiveSessions, terminateSessionApi, type ActiveSession } from "../api";
+import { Skeleton } from "../components/Skeleton";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -50,6 +51,7 @@ export default function Sessions() {
         (that would need session persistence, which isn't built).
       </p>
       {error && <div className="error-banner">{error}</div>}
+      {!sessions && <Skeleton lines={3} />}
       {sessions && sessions.length === 0 && <div className="empty-state">No active sessions right now.</div>}
       {sessions && sessions.length > 0 && (
         <table className="audit-table">

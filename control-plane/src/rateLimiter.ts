@@ -33,8 +33,16 @@ interface AttemptState {
   lockedUntil: number | null;
 }
 
-export function makeRateLimiter({ windowMs, maxAttempts, lockoutMs }: RateLimiterOptions): RateLimiter {
+// Accepts either fixed options (every existing call site — access-request
+// spam limiting, webhook test-send limiting, unchanged behavior) or a
+// resolver function evaluated on every check/recordFailure call, so a
+// caller like the login limiter can read admin-configurable settings live
+// from SecurityPolicy instead of the limits being baked into this closure
+// at server start. Same "live, not startup-snapshotted" principle already
+// used for RBAC roles.
+export function makeRateLimiter(optionsOrResolver: RateLimiterOptions | (() => RateLimiterOptions)): RateLimiter {
   const attempts = new Map<string, AttemptState>();
+  const resolve: () => RateLimiterOptions = typeof optionsOrResolver === "function" ? optionsOrResolver : () => optionsOrResolver;
 
   function check(key: string): { allowed: boolean; retryAfterSeconds?: number } {
     const state = attempts.get(key);
@@ -48,6 +56,7 @@ export function makeRateLimiter({ windowMs, maxAttempts, lockoutMs }: RateLimite
   }
 
   function recordFailure(key: string): { justLockedOut: boolean } {
+    const { windowMs, maxAttempts, lockoutMs } = resolve();
     const now = Date.now();
     const state = attempts.get(key);
     if (!state || now - state.firstAttemptAt > windowMs) {
@@ -68,8 +77,10 @@ export function makeRateLimiter({ windowMs, maxAttempts, lockoutMs }: RateLimite
 
   // Periodic sweep so this Map doesn't grow unbounded on a long-running
   // process — drops anything whose window has fully expired and isn't
-  // currently locked out.
+  // currently locked out. Re-reads windowMs each tick too, so a policy
+  // change takes effect here as well, not just on the next login attempt.
   setInterval(() => {
+    const { windowMs } = resolve();
     const now = Date.now();
     for (const [key, state] of attempts) {
       const windowExpired = now - state.firstAttemptAt > windowMs;

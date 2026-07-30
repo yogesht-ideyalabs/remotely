@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchResources, type Resource } from "../api";
+import { fetchResources, getSession, type Resource } from "../api";
 import { useOrgFilter } from "../OrgContext";
 import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
@@ -65,11 +65,18 @@ export default function Resources() {
       />
       {error && <div className="error-banner">{error}</div>}
       {resources === null && <Skeleton lines={5} />}
-      {filtered && filtered.length === 0 && (
+      {filtered && filtered.length === 0 && resources && resources.length > 0 && (
+        <EmptyState icon="resources" message="No resources match your search." />
+      )}
+      {resources && resources.length === 0 && getSession()?.isAdmin && (
         <EmptyState
           icon="resources"
-          message={resources && resources.length > 0 ? "No resources match your search." : "No resources visible to your current role."}
+          message="Nothing here yet — this is what a fresh install looks like. Add a connection (SSH, RDP, VNC, a database, or a Kubernetes pod) to get started, or deploy an agent to have a client network report in on its own."
+          action={{ label: "Go to Connections →", onClick: () => navigate("/admin/connections") }}
         />
+      )}
+      {resources && resources.length === 0 && !getSession()?.isAdmin && (
+        <EmptyState icon="resources" message="No resources visible to your current role yet — ask an admin to grant you access." />
       )}
       {groups &&
         groups.map(([folder, items]) => (
@@ -102,6 +109,11 @@ export default function Resources() {
                       onClick={() => navigate(`/files/${r.id}${r.type === "ssh-agent" ? "?kind=ssh-agent" : ""}`)}
                     >
                       Files
+                    </button>
+                  )}
+                  {r.type === "kubernetes" && (
+                    <button className="connect-btn" style={{ marginTop: 6 }} onClick={() => navigate(`/k8s/${r.id}`)}>
+                      Browse Cluster
                     </button>
                   )}
                 </div>

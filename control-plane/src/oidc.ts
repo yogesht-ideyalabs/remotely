@@ -17,6 +17,26 @@ const ISSUER = process.env.OIDC_ISSUER ?? "http://localhost:5556/dex";
 const CLIENT_ID = process.env.OIDC_CLIENT_ID ?? "remotely";
 const CLIENT_SECRET = process.env.OIDC_CLIENT_SECRET ?? "remotely-dex-secret";
 const REDIRECT_URI = process.env.OIDC_REDIRECT_URI ?? "http://localhost:4000/api/auth/oidc/callback";
+// Whether the values above came from real env vars or the dev-default
+// fallback — surfaced read-only so an admin page can tell the difference
+// between "SSO is genuinely configured" and "running on demo defaults"
+// without ever exposing CLIENT_SECRET itself.
+const usingDefaults = !process.env.OIDC_ISSUER && !process.env.OIDC_CLIENT_ID;
+
+// Read-only — there is deliberately no corresponding setter. OIDC config is
+// env-var-only, read once at process start; making it live-editable would
+// mean re-initializing the discovery cache and JWKS verification on every
+// change, a bigger restructure than this getter. An admin page can show
+// this and tell you which env vars to set + restart, honestly, rather than
+// offering a save button that wouldn't actually take effect.
+export function getOidcConfigSummary() {
+  return {
+    issuer: ISSUER,
+    clientId: CLIENT_ID,
+    redirectUri: REDIRECT_URI,
+    usingDefaults,
+  };
+}
 
 interface Discovery {
   authorization_endpoint: string;

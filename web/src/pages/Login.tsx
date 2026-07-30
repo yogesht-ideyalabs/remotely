@@ -179,6 +179,11 @@ export default function Login() {
           provisioned on first login with no roles). Passkey: enter your username above, then use a passkey
           registered on your Profile page instead of a password.
         </div>
+        <div className="hint" style={{ marginTop: 8 }}>
+          <a href="/status" target="_blank" rel="noreferrer">
+            System status →
+          </a>
+        </div>
       </form>
     </div>
   );

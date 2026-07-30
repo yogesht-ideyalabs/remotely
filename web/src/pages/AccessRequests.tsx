@@ -11,6 +11,7 @@ import {
   type AccessRequestItem,
   type AccessRequestStatus,
 } from "../api";
+import { Skeleton } from "../components/Skeleton";
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "var(--accent)",
@@ -196,6 +197,7 @@ export default function AccessRequests() {
       {anyAdmin && (
         <div className="section-card">
           <h3>Approval queue {queue && queue.length > 0 ? `(${queue.length})` : ""}</h3>
+          {!queue && <Skeleton lines={2} />}
           {queue && queue.length === 0 && <div className="empty-state">Nothing pending.</div>}
           {queue && queue.length > 0 && (
             <table className="audit-table">
@@ -294,6 +296,7 @@ export default function AccessRequests() {
 
       <div className="section-card">
         <h3>My requests</h3>
+        {!mine && <Skeleton lines={2} />}
         {mine && mine.length === 0 && <div className="empty-state">You haven't requested access to anything.</div>}
         {mine && mine.length > 0 && (
           <table className="audit-table">

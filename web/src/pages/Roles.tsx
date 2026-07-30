@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchRoles, createRoleApi, updateRoleApi, deleteRoleApi, type Role } from "../api";
 import { FieldLabel } from "../components/FieldLabel";
 import { LabelChips } from "../components/LabelChips";
+import { Skeleton } from "../components/Skeleton";
 
 const emptyForm = {
   name: "",
@@ -63,6 +64,8 @@ export default function Roles() {
       manageLabelsJson: JSON.stringify(role.manageLabels ?? {}),
       allowClipboard: role.allowClipboard ?? true,
       breakGlassEligible: role.breakGlassEligible ?? false,
+      requireSessionModeration: role.requireSessionModeration ?? false,
+      canModerate: role.canModerate ?? false,
     });
     setEditing(role.name);
   }
@@ -350,6 +353,7 @@ export default function Roles() {
         </button>
       )}
 
+      {!groups && <Skeleton lines={4} />}
       {groups &&
         groups.map(([category, items]) => (
           <div key={category} style={{ marginBottom: 28 }}>
