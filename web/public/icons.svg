@@ -27,4 +27,7 @@
   <symbol id="i-chat" viewBox="0 0 16 16">
     <path fill="currentColor" d="M2 2.5A1.5 1.5 0 013.5 1h9A1.5 1.5 0 0114 2.5v7a1.5 1.5 0 01-1.5 1.5H5.707L3 13.707V11H3.5A1.5 1.5 0 012 9.5v-7zM3.5 2a.5.5 0 00-.5.5v7a.5.5 0 00.5.5H4v2.293L6.293 10H12.5a.5.5 0 00.5-.5v-7a.5.5 0 00-.5-.5h-9z"/>
   </symbol>
+  <symbol id="i-chart" viewBox="0 0 16 16">
+    <path fill="currentColor" d="M1 14h14v1H0V0h1v14zM3 11h2v3H3v-3zm3-4h2v7H6V7zm3-3h2v10H9V4zm3-3h2v13h-2V1z"/>
+  </symbol>
 </svg>

@@ -335,3 +335,37 @@ if (INFRA_ENABLED && INFRA_ACCOUNT_ID) {
 } else if (INFRA_ENABLED && !INFRA_ACCOUNT_ID) {
   console.warn(`[${AGENT_ID}] INFRA_ENABLED=true but INFRA_ACCOUNT_ID not set — infrastructure discovery disabled`);
 }
+
+// ─── System Metrics Collection ───────────────────────────────────────────────
+// Collects CPU, memory, disk, network, load metrics and reports to control plane.
+// Runs every 15 seconds by default (configurable via METRICS_INTERVAL_SECONDS).
+
+import { collectSystemMetrics } from "./metricsCollector.js";
+
+const METRICS_ENABLED = process.env.METRICS_ENABLED !== "false"; // enabled by default
+const METRICS_INTERVAL = Number(process.env.METRICS_INTERVAL_SECONDS ?? "15") * 1000;
+
+if (METRICS_ENABLED) {
+  async function reportMetrics() {
+    try {
+      const points = collectSystemMetrics(AGENT_HOSTNAME);
+      if (points.length > 0) {
+        const resp = await fetch(`${CONTROL_PLANE_HTTP_URL}/api/metrics/ingest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ points }),
+        });
+        if (!resp.ok) {
+          console.error(`[${AGENT_ID}] metrics ingest failed: ${resp.status}`);
+        }
+      }
+    } catch (err) {
+      // Silent fail — metrics are best-effort, don't disrupt the agent
+    }
+  }
+
+  // Start after a short delay, then on interval
+  setTimeout(reportMetrics, 3000);
+  setInterval(reportMetrics, METRICS_INTERVAL);
+  console.log(`[${AGENT_ID}] system metrics enabled (interval=${METRICS_INTERVAL / 1000}s)`);
+}

@@ -36,6 +36,7 @@ function buildAdminItems(session: NonNullable<ReturnType<typeof getSession>>): N
     items.push({ to: "/admin/roles", label: "Roles", icon: "shield" });
     items.push({ to: "/admin/organizations", label: "Organizations", icon: "building" });
     items.push({ to: "/admin/monitors", label: "Uptime Monitors", icon: "radar" });
+    items.push({ to: "/admin/monitoring", label: "Monitoring", icon: "chart" });
     items.push({ to: "/admin/siem", label: "SIEM Export", icon: "upload" });
     items.push({ to: "/admin/compliance", label: "Compliance", icon: "check-shield" });
     items.push({ to: "/admin/plugins", label: "Plugins", icon: "puzzle" });

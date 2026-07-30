@@ -35,6 +35,7 @@ import SecurityPolicy from "./pages/SecurityPolicy";
 import Features from "./pages/Features";
 import ChatOps from "./pages/ChatOps";
 import KubernetesBrowser from "./pages/KubernetesBrowser";
+import Monitoring from "./pages/Monitoring";
 import Bots from "./pages/Bots";
 import ModeratedSessions from "./pages/ModeratedSessions";
 import Status from "./pages/Status";
@@ -86,6 +87,7 @@ export default function App() {
           <Route path="/admin/install-agent" element={<InstallAgent />} />
           <Route path="/features" element={<Features />} />
           <Route path="/admin/chatops" element={<ChatOps />} />
+          <Route path="/admin/monitoring" element={<Monitoring />} />
           <Route path="/k8s/:connectionId" element={<KubernetesBrowser />} />
         </Route>
       </Routes>

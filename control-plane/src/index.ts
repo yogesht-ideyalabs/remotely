@@ -4019,6 +4019,64 @@ app.get("/api/k8s/:connectionId/pods/:podName/logs", requireAuth, (req: AuthedRe
     .catch((e) => res.status(500).json({ error: (e as Error).message }));
 });
 
+// ─── Metrics & Monitoring API ────────────────────────────────────────────────
+import {
+  ingestMetrics, queryMetrics, listMetricNames, listMetricHosts, latestMetrics,
+  listAlerts, getAlert, createAlert, updateAlert, deleteAlert, evaluateAlerts,
+  type MetricPoint, type MetricAlert,
+} from "./metrics.js";
+
+// Ingest endpoint (agents POST metrics here)
+app.post("/api/metrics/ingest", (req, res) => {
+  const { points } = req.body;
+  if (!Array.isArray(points)) { res.status(400).json({ error: "points[] required" }); return; }
+  const count = ingestMetrics(points as MetricPoint[]);
+  // Evaluate alerts after ingest
+  const alertResults = evaluateAlerts();
+  res.json({ ingested: count, alertsFiring: alertResults.firing.length, alertsResolved: alertResults.resolved.length });
+});
+
+// Query metrics (for charts)
+app.post("/api/metrics/query", requireAuth, (req: AuthedRequest, res) => {
+  const { host, name, from, to, step } = req.body;
+  if (!name || !from || !to) { res.status(400).json({ error: "name, from, to required" }); return; }
+  const series = queryMetrics({ host, name, from, to, step });
+  res.json(series);
+});
+
+// Discovery
+app.get("/api/metrics/names", requireAuth, (_req, res) => { res.json(listMetricNames()); });
+app.get("/api/metrics/hosts", requireAuth, (_req, res) => { res.json(listMetricHosts()); });
+
+// Latest values for a host
+app.get("/api/metrics/latest/:host", requireAuth, (req, res) => {
+  res.json(latestMetrics(req.params.host));
+});
+
+// Alerts CRUD
+app.get("/api/metrics/alerts", requireAuth, requireAnyAdmin, (_req, res) => { res.json(listAlerts()); });
+app.post("/api/metrics/alerts", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  const { name, metric, condition, threshold, durationSeconds, hostFilter, severity } = req.body;
+  if (!name || !metric || !condition || threshold === undefined) { res.status(400).json({ error: "name, metric, condition, threshold required" }); return; }
+  const alert = createAlert({
+    id: crypto.randomUUID(), name, metric, condition, threshold,
+    durationSeconds: durationSeconds || 60, hostFilter: hostFilter || "",
+    severity: severity || "warning", enabled: true, createdBy: req.user!.sub,
+  });
+  logAudit(req.user!.sub, "metric_alert_created", alert.id, `${name}: ${metric} ${condition} ${threshold}`);
+  res.status(201).json(alert);
+});
+app.put("/api/metrics/alerts/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  if (!updateAlert(req.params.id, req.body)) { res.status(404).json({ error: "Alert not found" }); return; }
+  logAudit(req.user!.sub, "metric_alert_updated", req.params.id, "Alert updated");
+  res.json(getAlert(req.params.id));
+});
+app.delete("/api/metrics/alerts/:id", requireAuth, requireAdmin, (req: AuthedRequest, res) => {
+  if (!deleteAlert(req.params.id)) { res.status(404).json({ error: "Alert not found" }); return; }
+  logAudit(req.user!.sub, "metric_alert_deleted", req.params.id, "Alert deleted");
+  res.json({ ok: true });
+});
+
 server.listen(PORT, () => {
   console.log(`Remotely control plane listening on :${PORT}`);
   warnAboutUnsetSecrets();
